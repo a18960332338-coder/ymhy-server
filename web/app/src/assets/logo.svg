@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#161823"/>
+      <stop offset="100%" stop-color="#0a0b12"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#25F4EE"/>
+      <stop offset="100%" stop-color="#FE2C55"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f4ecda"/>
+      <stop offset="100%" stop-color="#e9dcbf"/>
+    </linearGradient>
+    <filter id="rough" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3"/>
+      <feColorMatrix values="0 0 0 0 0.4  0 0 0 0 0.34  0 0 0 0 0.2  0 0 0 0.08 0"/>
+      <feComposite in2="SourceGraphic" operator="in"/>
+    </filter>
+  </defs>
+  <!-- 深色抖音风格背景 + 圆角 -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- 内层纸质感区域 -->
+  <rect x="46" y="46" width="420" height="420" rx="76" fill="url(#paper)" opacity="1"/>
+  <!-- 粗糙纹理覆盖（米黄色纸张纤维） -->
+  <rect x="46" y="46" width="420" height="420" rx="76" fill="url(#paper)" opacity="1" filter="url(#rough)"/>
+  <!-- 中文字：云眠花园（线条风），外描边，品牌色渐变填充 -->
+  <g transform="translate(40,138)">
+    <text x="0" y="188"
+      font-family="'Noto Serif SC','Songti SC','SimSun',serif"
+      font-size="158"
+      font-weight="500"
+      letter-spacing="4"
+      fill="none"
+      stroke="url(#brand)"
+      stroke-width="1.5"
+      opacity=".55"/>
+    <text x="0" y="188"
+      font-family="'Noto Serif SC','Songti SC','SimSun',serif"
+      font-size="158"
+      font-weight="500"
+      letter-spacing="4"
+      fill="#1f2230"/>
+  </g>
+  <!-- Cloud Garden 英文 -->
+  <g transform="translate(0,330)">
+    <text x="256" y="0"
+      text-anchor="middle"
+      font-family="'Georgia','Noto Serif',serif"
+      font-size="68"
+      font-weight="500"
+      letter-spacing="2"
+      fill="#3b3f4e"
+      opacity=".85"/>
+  </g>
+  <!-- 右上角抖音霓虹条 -->
+  <g transform="translate(404,70)">
+    <rect width="68" height="10" rx="5" fill="url(#brand)"/>
+    <rect y="22" width="48" height="6" rx="3" fill="#25F4EE"/>
+    <rect y="38" width="58" height="6" rx="3" fill="#FE2C55"/>
+  </g>
+</svg>

@@ -1,0 +1,3459 @@
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import api from '../api'
+import Toast from '../toast'
+import Icon from '../components/Icon'
+import bananaIcon from '../assets/banana-icon.png'
+import { TemplateResultLibrary } from './TemplateStudio'
+import { lastModelKey } from '../accountKeys'
+
+// === HeroUI v3 适配层 ====================================================
+// 把原来的「纯 HTML + 自定义 CSS」基础组件换成 HeroUI v3 组件，
+// 但对外保持完全相同的 props 签名 —— 页面其余 3000+ 行业务代码零改动。
+//
+// 事件对象做了兼容包装：仍向上抛 { target: { value / checked }, stopPropagation }，
+// 保证既有的 e.target.checked / e.stopPropagation() 调用点行为不变。
+import {
+  Badge,
+  Button as HeroButton,
+  Card,
+  Checkbox as HeroCheckbox,
+  Chip,
+  Description,
+  EmptyState,
+  Input as HeroInput,
+  Label,
+  NumberField,
+  Popover,
+  ProgressBar,
+  Radio,
+  Radio as HeroRadio,
+  RadioGroup as HeroRadioGroup,
+  ScrollShadow,
+  Separator,
+  Spinner,
+  Surface,
+  Tabs,
+  TextArea as HeroTextArea,
+  Modal as HeroModal,
+  Tooltip as HeroTooltip,
+} from '@heroui/react'
+import { HeroSelect } from '../components/ui'
+
+// 把 HeroUI 回调值包装成"像原生事件"的对象，兼容老调用点
+function _evt(value, key = 'value') {
+  return {
+    target: { [key]: value },
+    currentTarget: { [key]: value },
+    stopPropagation() {},
+    preventDefault() {},
+  }
+}
+
+function Button({
+  children, type = 'default', size = 'default', theme = 'light',
+  onClick, loading = false, disabled = false, block = false,
+  style, className = '', title,
+}) {
+  const variant = theme === 'solid'
+    ? (type === 'danger' ? 'danger' : 'primary')
+    : (type === 'danger' ? 'danger-soft' : 'secondary')
+  const sz = size === 'small' ? 'sm' : size === 'large' ? 'lg' : 'md'
+  return (
+    <HeroButton
+      title={title}
+      className={className}
+      style={style}
+      variant={variant}
+      size={sz}
+      fullWidth={block}
+      isDisabled={disabled || loading}
+      onClick={onClick}
+    >
+      {loading ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Spinner size="sm" />
+          {children}
+        </span>
+      ) : children}
+    </HeroButton>
+  )
+}
+
+function Input({ value, onChange, onKeyDown, placeholder, showClear, prefix, style, type = 'text' }) {
+  const [local, setLocal] = useState(value ?? '')
+  useEffect(() => { if (value !== undefined) setLocal(value) }, [value])
+  const canClear = showClear && String(local).length > 0
+  const emit = (v) => { setLocal(v); onChange && onChange(_evt(v)) }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', ...(style || {}) }}>
+      {prefix ? <span style={{ fontSize: 12, opacity: 0.7, flex: '0 0 auto' }}>{prefix}</span> : null}
+      <HeroInput
+        type={type}
+        placeholder={placeholder}
+        value={local}
+        onKeyDown={onKeyDown}
+        onChange={(e) => emit(e && e.target ? e.target.value : e)}
+        fullWidth
+      />
+      {canClear ? (
+        <HeroButton
+          variant="ghost"
+          size="sm"
+          isIconOnly
+          aria-label="清除"
+          onClick={() => emit('')}
+        ><Icon name="close" size={12} /></HeroButton>
+      ) : null}
+    </div>
+  )
+}
+
+function TextArea({ value, onChange, placeholder, rows = 4, autosize, showClear, style }) {
+  const [local, setLocal] = useState(value ?? '')
+  useEffect(() => { if (value !== undefined) setLocal(value) }, [value])
+  const canClear = showClear && String(local).length > 0
+  const emit = (v) => { setLocal(v); onChange && onChange(_evt(v)) }
+  const minH = Math.max(3, rows || 4) * 28 + 20
+  return (
+    <div style={{ width: '100%', ...(style || {}) }}>
+      <HeroTextArea
+        placeholder={placeholder}
+        value={local}
+        rows={rows || 4}
+        onChange={(e) => emit(e && e.target ? e.target.value : e)}
+        fullWidth
+        style={{ minHeight: autosize ? undefined : minH, maxHeight: 240 }}
+      />
+      {canClear ? (
+        <HeroButton
+          variant="ghost"
+          size="sm"
+          isIconOnly
+          aria-label="清除"
+          onClick={() => emit('')}
+        ><Icon name="close" size={12} /></HeroButton>
+      ) : null}
+    </div>
+  )
+}
+
+function InputNumber({ value, onChange, min, max, step = 1, style }) {
+  return (
+    <NumberField.Root
+      value={value == null ? undefined : Number(value)}
+      onChange={(n) => onChange && onChange(n)}
+      minValue={min}
+      maxValue={max}
+      step={step}
+      style={style}
+    >
+      <NumberField.Group>
+        <NumberField.DecrementButton>−</NumberField.DecrementButton>
+        <NumberField.Input />
+        <NumberField.IncrementButton>+</NumberField.IncrementButton>
+      </NumberField.Group>
+    </NumberField.Root>
+  )
+}
+
+/** HeroUI v3 的 Checkbox 是命名空间复合组件。
+ *  v2 那种「传文字当 children」的写法只会渲染出隐藏的 input，
+ *  方框和对勾必须由 Checkbox.Control + Checkbox.Indicator 提供。
+ *  结构：Checkbox > Content > (Control > Indicator) + 纯文本 label */
+function Checkbox({ checked, onChange, children, ...rest }) {
+  return (
+    <HeroCheckbox
+      isSelected={!!checked}
+      onChange={(v) => onChange && onChange(_evt(!!v, 'checked'))}
+      {...rest}
+    >
+      <HeroCheckbox.Content>
+        <HeroCheckbox.Control>
+          <HeroCheckbox.Indicator />
+        </HeroCheckbox.Control>
+        {children}
+      </HeroCheckbox.Content>
+    </HeroCheckbox>
+  )
+}
+
+// 注：原实现是一个纯 div 容器（页面内未被使用，保留兼容）
+function RadioGroup({ value, onChange, children }) {
+  return (
+    <HeroRadioGroup
+      value={value}
+      onChange={onChange}
+      orientation="horizontal"
+      style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}
+    >{children}</HeroRadioGroup>
+  )
+}
+
+// 页面里是「单选项平铺」用法（排序方式切换），每项自带 current/onChange，
+// 因此每项单独包一层 RadioGroup 提供 React Aria 所需的上下文。
+function RadioV2({ label, value, current, onChange, children }) {
+  return (
+    <HeroRadioGroup
+      value={current}
+      onChange={(v) => onChange && onChange(v)}
+      orientation="horizontal"
+    >
+      <HeroRadio value={value}>
+        <HeroRadio.Content>
+          <HeroRadio.Control><HeroRadio.Indicator /></HeroRadio.Control>
+          {label ?? children}
+        </HeroRadio.Content>
+      </HeroRadio>
+    </HeroRadioGroup>
+  )
+}
+
+// Chip 的 color 合法值只有 default / accent / success / danger / warning
+// （没有 secondary / purple / cyan / blue，写了会被忽略）
+const TAG_COLOR_MAP = {
+  gray: 'default', cyan: 'default', blue: 'default',
+  red: 'danger', green: 'success', orange: 'warning',
+  purple: 'default', amber: 'warning',
+}
+
+function Tag({ children, color = 'gray', size = 'default', style }) {
+  return (
+    <Chip
+      variant="soft"
+      color={TAG_COLOR_MAP[color] || 'default'}
+      size={size === 'small' ? 'sm' : 'md'}
+      style={style}
+    >{children}</Chip>
+  )
+}
+
+/** 本地 Select 适配器：保留 Semi 风格 props（optionList / value / onChange），
+ *  内部实现为 HeroUI Select + ListBox（已迁移，不再是手搓的 mini-select div），
+ *  业务调用处无需改动。 */
+function Select({ value, onChange, optionList, placeholder = '请选择', style }) {
+  return (
+    <HeroSelect
+      value={value}
+      onChange={onChange}
+      options={optionList || []}
+      placeholder={placeholder}
+      style={style}
+    />
+  )
+}
+
+function Spin({ size = 'default', tip }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: 20 }}>
+      <Spinner size={size === 'large' ? 'lg' : 'md'} />
+      {tip ? <div style={{ fontSize: 12, opacity: 0.7 }}>{tip}</div> : null}
+    </div>
+  )
+}
+
+// 移除 HeroUI/React Aria Modal 关闭后可能残留的 backdrop / overlay 节点。
+// 该残留会形成永远挡在前面的透明蒙层，导致页面无法点击。
+function cleanupModalResidue() {
+  const selectors = [
+    '[data-slot="modal-backdrop"]',
+    '[data-slot="modal-root"]',
+    '[data-slot="modal-overlay"]',
+    '.modal__backdrop',
+    '.react-aria-ModalOverlay',
+  ]
+  selectors.forEach(sel => {
+    try {
+      document.querySelectorAll(sel).forEach(el => {
+        // 只清理属于「关闭后残留」且已不可见的节点；已进入动画中的不做强移除，避免闪现。
+        el.style.display = 'none'
+        el.style.pointerEvents = 'none'
+        el.setAttribute('hidden', '')
+      })
+    } catch (e) { /* ignore */ }
+  })
+}
+
+function Modal({ title, visible, onOk, onCancel, okText = '确定', cancelProps, okType = 'default', width = 520, footer, children }) {
+  const hideCancel = cancelProps && cancelProps.style && cancelProps.style.display === 'none'
+  const w = typeof width === 'number' ? `${width}px` : width
+
+  // 无论通过何种方式把 visible 置为 false（取消/确定/自定义关闭按钮/遮罩/Esc），
+  // 都会触发本 effect。它在关闭动画结束后彻底移除 HeroUI/React Aria 残留的
+  // backdrop / overlay 节点，确保关闭后没有任何蒙层残留、页面可正常交互。
+  useEffect(() => {
+    if (visible) return
+    const timer = setTimeout(() => {
+      cleanupModalResidue()
+    }, 420)
+    return () => clearTimeout(timer)
+  }, [visible])
+
+  const handleOpenChange = (open) => {
+    if (!open) {
+      onCancel && onCancel()
+    }
+  }
+
+  return (
+    <HeroModal.Root isOpen={!!visible} onOpenChange={handleOpenChange}>
+      <HeroModal.Backdrop className="z-[99998]" style={{ zIndex: 99998 }} />
+      <HeroModal.Container
+        className="z-[99999]"
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 99999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+        }}
+      >
+        <HeroModal.Dialog style={{ width: w, maxWidth: '92vw', zIndex: 99999 }}>
+          {title ? (
+            <HeroModal.Header><HeroModal.Heading>{title}</HeroModal.Heading></HeroModal.Header>
+          ) : null}
+          <HeroModal.Body>{children}</HeroModal.Body>
+          {footer !== undefined ? (
+            <HeroModal.Footer>{footer}</HeroModal.Footer>
+          ) : (
+            <HeroModal.Footer>
+              {!hideCancel ? (
+                <Button theme="light" onClick={() => onCancel && onCancel()}>取消</Button>
+              ) : null}
+              <Button
+                theme="solid"
+                type={okType === 'danger' ? 'danger' : 'default'}
+                onClick={() => onOk && onOk()}
+              >{okText}</Button>
+            </HeroModal.Footer>
+          )}
+        </HeroModal.Dialog>
+      </HeroModal.Container>
+    </HeroModal.Root>
+  )
+}
+
+function Tooltip({ content, children }) {
+  return (
+    <HeroTooltip.Root>
+      <HeroTooltip.Trigger>{children}</HeroTooltip.Trigger>
+      <HeroTooltip.Content>{content}</HeroTooltip.Content>
+    </HeroTooltip.Root>
+  )
+}
+// === Tokens / Constants (shared) ===
+const BUCKET_MAIN = 'mains'
+const BUCKET_CAT = 'cats'
+const BUCKET_OUT = 'synthesized'
+
+const BUCKET_LABEL = (brand) => {
+  const isSofa = brand === 'sofawithcat'
+  return {
+    [BUCKET_MAIN]: isSofa ? '沙发套主图 Mains' : '家纺主图 Mains',
+    [BUCKET_CAT]:  '猫咪素材 Cats',
+  }
+}
+const DZ_ICON = { [BUCKET_MAIN]: <Icon name="home" size={16} />, [BUCKET_CAT]: <Icon name="cat" size={16} /> }
+const DZ_COLOR = { [BUCKET_MAIN]: 'primary', [BUCKET_CAT]: 'default' }
+const PB_PLACEHOLDER = (brand) => {
+  const isSofa = brand === 'sofawithcat'
+  return {
+    [BUCKET_MAIN]: isSofa ? '粘贴沙发套主图' : '粘贴家纺主图',
+    [BUCKET_CAT]:  '粘贴猫咪图',
+  }
+}
+const GRID_COLS = {
+  [BUCKET_MAIN]: 'cols-3',
+  [BUCKET_CAT]: 'cols-3',
+}
+
+const PAIR_STRATEGIES = (brand) => {
+  const isSofa = brand === 'sofawithcat'
+  const mainWord = isSofa ? '沙发套主图' : '家纺图'
+  return [
+    {
+      value: 'random',
+      label: '随机猫咪匹配 (推荐)',
+      hint: `每张${mainWord}随机配一张不同的猫咪，例如 1A / 2C / 3B`,
+    },
+    { value: 'zip', label: '按顺序配对 (n × 1)' },
+  ]
+}
+
+const DEFAULT_PROMPT = (brand) => {
+  const isSofa = brand === 'sofawithcat'
+  const mainName    = isSofa ? '沙发套'       : '家纺四件套'
+  const mainNameImg = isSofa ? '沙发套主图'   : '家纺四件套图'
+  const productWord = isSofa ? '沙发套'       : '四件套'
+  const surfaceWord = isSofa ? '沙发套面料'   : '床品'
+  const frameWord   = isSofa ? '沙发框架/扶手' : '床架/床垫基座'
+  const p1 = `我要生成一张猫咪在${mainName}上面的电商产品图片（猫咪姿态为：站着 / 躺着 / 坐着，随机选一种自然姿态）。`
+  const p3 = `1) 以用户上传的「${mainNameImg}」作为唯一产品底图，${productWord}的图案、颜色、款式、材质纹理、褶皱光影、拍摄角度、构图和拍摄背景，必须与原${productWord}图片保持 100% 完全一致，不做任何修改、美化或重绘。`
+  // 清理床上/沙发上原有装饰道具（抱枕、玩偶、毯子、摆件等），保证摆放猫咪的平面干净
+  const p3_clean = `2) 产品底图清理（必须严格执行）：必须从场景中移除放在${productWord}上的所有装饰性物品，包括但不限于：抱枕、靠垫、毛绒玩具、玩偶、毯子、围巾、杂志书籍、小摆件、鲜花盆栽、床旗、床头搭巾、多余的褶皱装饰、床头柜/边几上的背景道具；只保留「${productWord}本身」这一件产品，${frameWord}可以保留但表面要清空，确保猫咪摆放的平面干净整洁，不被原有装饰物遮挡或干扰。`
+  const p4 = `3) 只在${productWord}上「自然地增加一只猫咪」：以用户上传的「猫咪素材图片」为参考——【必须保持一致】：同一只猫的品种、毛色、斑纹、五官、体型、毛发长度完全一致；【必须变化：禁止照搬素材图姿势】：猫咪的**姿态不能与素材图完全相同**，不要复制原图的站立/躺卧/坐姿角度、四肢摆放方式、身体朝向、头部朝向、尾巴位置和眼睛方向，必须换成**另一种自然的站 / 躺 / 坐姿势**（可以从素材图没出现过的角度拍摄），让猫咪在${productWord}上的摆放像是实拍的新画面，而不是把素材图里的猫抠图平移贴过来；比例真实，与${surfaceWord}有正确的接触阴影和透视关系，光影方向与原图一致。`
+  const p5 = '4) 画面输出为真实电商主图质感，无文字、无水印、无 logo、无边框，构图完整、分辨率充足。'
+  return [p1, '请严格遵循以下规则：', p3, p3_clean, p4, p5].join('\n')
+}
+
+const SIZE_PRESETS = [
+  { label: '1:1', w: 1024, h: 1024 },
+  { label: '3:4', w: 1080, h: 1440 },
+  { label: '4:3', w: 1440, h: 1080 },
+  { label: '3:4 HD', w: 1500, h: 2000 },
+]
+
+const SORT_OPTIONS = [
+  { value: 'mtime', label: '按时间' },
+  { value: 'name', label: '按名称' },
+  { value: 'size', label: '按大小' },
+]
+
+// ---------- 工具函数 ----------
+function fmtSize(n) {
+  if (n == null) return '-'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(2)} MB`
+}
+function groupByDay(items) {
+  const groups = new Map()
+  for (const it of items) {
+    const d = (it.mtimeText || '').slice(0, 10) || '未知'
+    if (!groups.has(d)) groups.set(d, [])
+    groups.get(d).push(it)
+  }
+  return Array.from(groups.entries()).sort((a, b) => a[0] < b[0] ? 1 : -1)
+}
+
+// ---------- SimpleDropzone（严格对齐参考模板简洁虚线框风格）----------
+function SimpleDropzone({ bucket, onUploaded, fileInputRef, busy, setBusy, triggerRef, brand, tile }) {
+  const [drag, setDrag] = useState(false)
+  // 全局粘贴激活：鼠标 hover 过 / 获得焦点 → 当前 dropzone 作为 paste 目标
+  const [pasteActive, setPasteActive] = useState(false)
+  const color = DZ_COLOR[bucket]
+
+  const _uploadFiles = useCallback(async (files) => {
+    const imgs = Array.from(files || []).filter(f => f && f.type && f.type.startsWith('image/'))
+    if (!imgs.length) return 0
+    setBusy && setBusy(true)
+    try {
+      const r = await api.upload(bucket, imgs, { brand })
+      const saved = r.savedCount || 0
+      const bucketLabel = bucket === BUCKET_MAIN ? '主图素材库' : bucket === BUCKET_CAT ? '猫咪素材库' : '素材库'
+      if (saved > 0) Toast.success(`已上传 ${saved}/${r.total} 张图片到「${bucketLabel}」`)
+      else Toast.warning(`未成功保存任何图片`)
+      // 上传后立即刷新当前 dropzone 的列表：保证主图/猫咪上传后立即显示在素材库
+      onUploaded && onUploaded(r)
+      // 派发全局事件：若用户在猫咪素材库页（CatsGallery）或结果图库等，也能同步刷新
+      if (bucket === BUCKET_CAT) {
+        window.dispatchEvent(new CustomEvent('tk:refresh-cats', { detail: r }))
+      } else if (bucket === BUCKET_MAIN) {
+        window.dispatchEvent(new CustomEvent('tk:refresh-mains', { detail: r }))
+      }
+      return saved
+    } catch (err) {
+      Toast.error('上传失败: ' + err.message)
+      return 0
+    } finally {
+      setBusy && setBusy(false)
+    }
+  }, [bucket, onUploaded, setBusy, brand])
+
+  // 监听外部 quick-upload 事件（从顶栏 / 侧栏快捷入口触发）
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail?.bucket !== bucket) return
+      fileInputRef?.current?.click?.()
+    }
+    window.addEventListener('tk:quick-upload', handler)
+    return () => window.removeEventListener('tk:quick-upload', handler)
+  }, [bucket, fileInputRef])
+
+  const onPaste = async (e) => {
+    if (!e.clipboardData) return
+    const items = e.clipboardData.items
+    if (!items || items.length === 0) return
+    const files = []
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]
+      if (!it) continue
+      if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+        const f = it.getAsFile()
+        if (f) files.push(f)
+      }
+    }
+    if (files.length === 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    await _uploadFiles(files)
+  }
+
+  // 全局粘贴监听：鼠标 hover 本 dropzone 或 本 dropzone 有焦点时才捕获
+  useEffect(() => {
+    const global = (e) => {
+      if (!pasteActive) return
+      // 若已有输入框/可编辑元素在处理粘贴，不要劫持（避免覆盖用户输入文本）
+      const ae = document.activeElement
+      if (ae) {
+        const tag = (ae.tagName || '').toLowerCase()
+        if (tag === 'input' || tag === 'textarea' || ae.isContentEditable) return
+      }
+      onPaste(e)
+    }
+    document.addEventListener('paste', global, true)
+    return () => document.removeEventListener('paste', global, true)
+  }, [pasteActive, _uploadFiles])
+
+  const onDragOver = (e) => { e.preventDefault(); setDrag(true) }
+  const onDragLeave = (e) => {
+    // 只有离开 dropzone 本身才取消 drag 高亮
+    if (e.currentTarget && !e.currentTarget.contains(e.relatedTarget)) setDrag(false)
+  }
+  const onDrop = async (e) => {
+    e.preventDefault(); setDrag(false)
+    const files = Array.from(e.dataTransfer?.files || [])
+    if (!files.length) return
+    await _uploadFiles(files)
+  }
+  const pick = () => fileInputRef.current && fileInputRef.current.click()
+  const onPick = async (e) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (!files.length) return
+    await _uploadFiles(files)
+  }
+
+  // 暴露给外部 triggerRef（可选）
+  useEffect(() => {
+    if (triggerRef) triggerRef.current = { pick }
+  }, [triggerRef])
+
+  return (
+    <Card
+      variant="transparent"
+      tabIndex={0}
+      role="button"
+      aria-label={`上传${BUCKET_LABEL(brand)[bucket]}`}
+      onPasteCapture={onPaste}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onMouseEnter={() => setPasteActive(true)}
+      onMouseLeave={() => setPasteActive(false)}
+      onFocus={() => setPasteActive(true)}
+      onBlur={() => setPasteActive(false)}
+      onClick={pick}
+      className={[
+        tile
+          ? 'dz-tile flex aspect-square w-full cursor-pointer select-none flex-col items-center justify-center gap-1 text-center outline-none'
+          : 'dz-card flex cursor-pointer select-none flex-col items-center gap-1.5 py-2 text-center outline-none',
+        tile ? (drag ? 'dz-tile--drag' : '') : (drag ? 'dz-card--drag' : ''),
+        tile ? (busy ? 'dz-tile--busy' : '') : (busy ? 'dz-card--busy' : ''),
+      ].filter(Boolean).join(' ')}
+    >
+      <span
+        className="shrink-0 text-(--foreground) text-2xl font-bold leading-none"
+        aria-hidden="true"
+      >
+        {busy ? <Spinner size="sm" /> : '+'}
+      </span>
+
+      <div className="min-w-0">
+        <div className="whitespace-nowrap text-[13px] font-semibold text-(--foreground)">
+          {busy ? '正在上传…' : (tile ? '添加图片' : PB_PLACEHOLDER(brand)[bucket])}
+        </div>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={onPick}
+      />
+    </Card>
+  )
+}
+
+// ---------- ImageGrid ----------
+function ImageGrid({ bucket, list, selected, onToggle, onDeleted, brand, addTile }) {
+  const accent = DZ_COLOR[bucket] === 'accent'
+  const [zoom, setZoom] = useState(null) // { src, cx, cy, rect } 鼠标 hover 整图预览
+  const scrollRef = useRef(null)
+  // 主图和猫咪素材都启用纵向滚动：固定三列 + 最大高度 + 滚动
+  const isVScroll = bucket === BUCKET_MAIN || bucket === BUCKET_CAT
+
+  if (!addTile && (!list || list.length === 0)) {
+    return (
+      <EmptyState className="rounded-(--radius-xl) border border-dashed border-(--border) py-8">
+        <Icon name="picture" size={20} />
+        <p className="mt-2 text-center text-xs text-(--muted)">暂无素材，拖拽文件到上方区域上传</p>
+      </EmptyState>
+    )
+  }
+  const handleMove = (e, name) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    setZoom({
+      src: api.imageUrl(bucket, name, { brand }),
+      cx: e.clientX,
+      cy: e.clientY,
+      rect,
+    })
+  }
+  return (
+    <div
+      ref={scrollRef}
+      className="grid grid-cols-3 gap-2"
+    >
+      {addTile}
+      {(list || []).map((it) => {
+        const name = it.name || it
+        const selectedNow = selected.includes(name)
+        const idx = selectedNow ? selected.indexOf(name) : -1
+        return (
+          <button
+            type="button"
+            key={name}
+            aria-pressed={selectedNow}
+            aria-label={name}
+            onClick={() => onToggle(name, !selectedNow)}
+            onMouseMove={(e) => handleMove(e, name)}
+            onMouseLeave={() => setZoom(null)}
+            className={[
+              'relative aspect-square cursor-pointer overflow-hidden rounded-(--radius-xl) p-0',
+              'bg-(--surface-secondary) transition-all duration-150',
+              'outline-none focus-visible:ring-2 focus-visible:ring-(--focus)',
+              selectedNow
+                ? 'border-(--foreground) shadow-[0_0_0_1px_var(--foreground)]'
+                : 'border border-(--border) hover:border-(--border-strong)',
+            ].join(' ')}
+          >
+            <img
+              src={api.imageUrl(bucket, name, { brand })}
+              alt={name}
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+            {selectedNow && (
+              <span className="absolute left-1 top-1 grid h-5 min-w-5 place-items-center rounded-full bg-(--surface-tertiary) px-1 text-[10px] font-bold text-(--foreground)">
+                {idx >= 0 ? idx + 1 : <Icon name="check" size={10} />}
+              </span>
+            )}
+          </button>
+        )
+      })}
+      {zoom && (() => {
+        // 紧贴卡片右侧展示放大预览（以卡片位置为锚点，不跟随鼠标）
+        const rect = zoom.rect
+        if (!rect) return null
+        const tileW = rect.width || 88
+        const tileH = rect.height || 88
+        const W = Math.min(Math.round(tileW * 3), window.innerWidth - 48)
+        const H = Math.min(Math.round(tileH * 3), window.innerHeight - 48)
+        // 默认：紧贴卡片右侧，垂直居中对齐卡片
+        let left = rect.right + 10
+        let top = rect.top + (tileH - H) / 2
+        // 边界修正：右侧放不下 → 放左侧
+        if (left + W > window.innerWidth - 16) left = rect.left - W - 10
+        if (left < 16) left = 16
+        if (top < 16) top = 16
+        if (top + H > window.innerHeight - 16) top = window.innerHeight - H - 16
+        return (
+          <div
+            style={{
+              position: 'fixed',
+              zIndex: 99999,
+              left,
+              top,
+              width: W,
+              height: H,
+              borderRadius: 'var(--radius-xl)',
+              border: '1px solid var(--border-strong)',
+              boxShadow: 'var(--shadow-overlay)',
+              overflow: 'hidden',
+              backgroundColor: 'var(--background)',
+              pointerEvents: 'none',
+            }}
+          >
+            <img
+              src={zoom.src}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+            />
+          </div>
+        )
+      })()}
+    </div>
+  )
+}
+
+// ---------- SmartImg ----------
+function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize, ...rest }) {
+  const [src, setSrc] = useState(() => api.imageUrl(bucket, name, { brand }))
+  const [tried, setTried] = useState(false)
+  const bucketRef = useRef(bucket)
+  const nameRef = useRef(name)
+  useEffect(() => {
+    if (bucketRef.current !== bucket || nameRef.current !== name) {
+      bucketRef.current = bucket
+      nameRef.current = name
+      setTried(false)
+      setSrc(api.imageUrl(bucket, name, { brand }))
+    }
+  }, [bucket, name, brand])
+  const handleLoad = useCallback((e) => {
+    if (onNaturalSize) {
+      const el = e.currentTarget || e.target
+      if (el && el.naturalWidth && el.naturalHeight) {
+        onNaturalSize(name, { w: el.naturalWidth, h: el.naturalHeight })
+      }
+    }
+  }, [name, onNaturalSize])
+  const onImgError = useCallback((e) => {
+    if (tried) { onError && onError(e); return }
+    setTried(true)
+    const raw = api.imageUrl(bucket, name, { brand })
+    const base = raw.replace(/\.[^./?#]*([?#]|$)/, '$1')
+    const exts = bucket === BUCKET_OUT ? ['.jpg', '.jpeg', '.webp', '.png'] : ['.jpg', '.jpeg', '.png']
+    const hasOriginalExt = /\.(jpg|jpeg|png|webp)$/i.test(raw.split('?')[0].split('#')[0])
+    const cand = hasOriginalExt ? exts : exts
+    let idx = 0
+    const tryNext = () => {
+      if (idx >= cand.length) { onError && onError(e); return }
+      const next = base + cand[idx++]
+      setSrc(next)
+    }
+    tryNext()
+    const el = e.currentTarget || e.target
+    if (el) {
+      el.onerror = (ev) => {
+        if (idx >= cand.length) { onError && onError(ev); return }
+        setSrc(base + cand[idx++])
+      }
+    }
+  }, [bucket, name, onError, tried, brand])
+  return <img src={src} alt={alt} style={style} onError={onImgError} onLoad={handleLoad} {...rest} />
+}
+
+// ---------- 图片尺寸批量预加载（瀑布流横向行优先排版用）----------
+function useImageDims(names, urlOf) {
+  const [dims, setDims] = useState({})
+  const listKey = (names || []).join('|')
+  useEffect(() => {
+    if (!names || !names.length) return
+    let alive = true
+    const cache = { ...dims }
+    Promise.all(names.map(n => new Promise(resolve => {
+      if (cache[n]) return resolve()
+      const img = new Image()
+      img.onload = () => { cache[n] = { w: img.naturalWidth, h: img.naturalHeight }; resolve() }
+      img.onerror = () => resolve()
+      img.src = urlOf(n)
+    }))).then(() => { if (alive) setDims(cache) })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listKey])
+  // 实时上报（SmartImg onLoad 用）：只 patch 单项，不重跑批量预加载
+  const reportDim = useCallback((name, dim) => {
+    setDims(prev => {
+      const old = prev[name]
+      if (old && old.w === dim.w && old.h === dim.h) return prev
+      return { ...prev, [name]: dim }
+    })
+  }, [])
+  return [dims, reportDim]
+}
+
+// 测量容器真实宽度（直接读 DOM，绕开 React state 时序问题）：
+// 每次渲染后都执行 useLayoutEffect —— 切 tab 时 panel 重新挂载、ref 重新绑定，
+// 此时能读到新宽度并 setState 触发重渲染（相同值 React bail out 不会死循环）。
+function useContainerWidth(ref) {
+  const [w, setW] = useState(0)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => {
+      const v = el.clientWidth || el.offsetWidth || 0
+      setW((prev) => (prev === v ? prev : v))
+    }
+    update()
+    let ro = null
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(update)
+      ro.observe(el)
+    }
+    window.addEventListener('resize', update)
+    return () => {
+      if (ro) ro.disconnect()
+      window.removeEventListener('resize', update)
+    }
+  }) // 刻意不传依赖：每次渲染都执行（ref 绑定/解绑无法用依赖数组表达）
+  return w
+}
+
+// 行优先(row-major)自适应宽度布局：
+// - 列数 cols：n <= bestCols*2 时取 ceil(n/2)（限制 1-2 行），否则用 bestCols（多行）
+// - 行内图片均分宽度，但 w 受 n 控制避免 1-2 张图撑满
+// - 末行不满时图左对齐，右侧留白
+function layoutMasonryRowMajor(items, dims, containerWidth, colWidth, gap) {
+  const safeW = Math.max(containerWidth || 0, colWidth * 1.5)
+  // 容器最佳列数：让 actualColWidth ≥ 80 且距 colWidth 目标最近
+  let bestCols = 1
+  let bestDist = Infinity
+  for (let tryCols = 1; tryCols <= 12; tryCols++) {
+    const cw = (safeW - (tryCols - 1) * gap) / tryCols
+    if (cw < 80) break
+    const dist = Math.abs(cw - colWidth)
+    if (dist < bestDist) { bestDist = dist; bestCols = tryCols }
+  }
+  const n = items.length
+  // ★ 所有 tab 布局统一：一律按容器最佳列数（不随张数变化）
+  const cols = bestCols
+  const w = Math.floor((safeW - (cols - 1) * gap) / cols)
+  // ★ 列贪心（最短列优先）：每张图贴当前最矮列的底部 → 图片紧密堆叠无空隙
+  const colHeights = new Array(cols).fill(0)
+  const placed = []
+  for (const it of items) {
+    let ratio = 1
+    const d = dims[it.name]
+    if (d && d.w && d.h) ratio = d.h / d.w
+    const h = Math.max(40, Math.round(w * ratio))
+    // 找当前最矮列
+    let col = 0
+    for (let i = 1; i < cols; i++) {
+      if (colHeights[i] < colHeights[col]) col = i
+    }
+    const x = Math.floor(col * (w + gap))
+    const y = colHeights[col]
+    colHeights[col] = y + h + gap
+    placed.push({ ...it, _x: x, _y: y, _w: w, _h: h })
+  }
+  return { placed, cols, totalH: Math.max(...colHeights, 0) }
+}
+
+// ---------- CanvasPreview（严格对齐参考：底部渐变叠加层 + meta/操作按钮）----------
+function CanvasPreview({ mainName, catName, outputName, loading = false, stageStatus = null, stageMessage = '', progress = 0, brand }) {
+  const hasAny = mainName || catName || outputName
+  const hasStage = loading || (stageStatus && stageStatus !== 'success')
+
+  if (outputName && !loading && stageStatus !== 'pending_seedream') {
+    const openFull = () => {
+      const a = document.createElement('a')
+      a.href = api.imageUrl(BUCKET_OUT, outputName, { brand })
+      a.target = '_blank'
+      a.rel = 'noreferrer'
+      a.click()
+    }
+    const download = () => {
+      const a = document.createElement('a')
+      a.href = api.imageUrl(BUCKET_OUT, outputName, { brand })
+      a.download = outputName
+      document.body.appendChild(a); a.click()
+      setTimeout(() => a.remove(), 500)
+    }
+    return (
+      <Card variant="secondary" className="relative overflow-hidden">
+        <SmartImg
+          bucket={BUCKET_OUT} name={outputName} alt="合成结果" brand={brand}
+          style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+        />
+        {/* 底部浮层：HeroUI Chip + IconButton，替代原自定义 overlay-* */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 p-3">
+          <Chip size="sm" variant="secondary" className="backdrop-blur-sm">AI 融合结果</Chip>
+          <div className="pointer-events-auto flex gap-2">
+            <HeroButton variant="secondary" size="sm" isIconOnly title="放大" onPress={openFull}>
+              <Icon name="search" size={12} />
+            </HeroButton>
+            <HeroButton variant="secondary" size="sm" isIconOnly title="下载" onPress={download}>
+              <Icon name="download" size={12} />
+            </HeroButton>
+          </div>
+        </div>
+      </Card>
+    )
+  }
+  if (hasStage) {
+    const titleMap = {
+      running: 'AI 正在合成主图…',
+      pending_seedream: 'Seedream 排队生成中',
+      fail: '合成失败',
+    }
+    const title = titleMap[stageStatus] || (loading ? '正在合成…' : '准备合成')
+    const iconMap = {
+      running: <Icon name="magic" size={14} />,
+      pending_seedream: <Icon name="time" size={14} />,
+      fail: <Icon name="attention" size={14} />,
+    }
+    const icon = iconMap[stageStatus] || <Icon name="magic" size={14} />
+    const isFail = stageStatus === 'fail'
+    return (
+      <Card variant="secondary" className="grid place-items-center p-10">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <span
+            className="grid h-16 w-16 place-items-center rounded-full"
+            style={{
+              background: isFail ? 'var(--danger-soft)' : 'var(--surface-tertiary)',
+              color: isFail ? 'var(--danger-soft-foreground)' : 'var(--foreground)',
+            }}
+          >
+            {loading ? <Spinner size="lg" /> : icon}
+          </span>
+          <div
+            className="text-base font-bold"
+            style={{ color: isFail ? 'var(--danger)' : 'var(--foreground)' }}
+          >
+            {title}
+          </div>
+          <p className="max-w-sm text-xs leading-relaxed text-(--muted)">
+            {stageMessage || (
+              stageStatus === 'pending_seedream'
+                ? '任务已加入 Seedream 生成队列。请稍后在「图库」查看，或保持本页等待自动刷新。'
+                : stageStatus === 'fail'
+                  ? '请检查参数或稍后重试。'
+                  : '主图 + 猫咪元素正在通过 AI 合成，通常需要数秒…'
+            )}
+          </p>
+          {loading && (
+            <div className="mt-2 w-[280px] max-w-full">
+              <ProgressBar.Root value={progress} maxValue={100} className="w-full">
+                <ProgressBar.Track>
+                  <ProgressBar.Fill id="_canvas_inner_progress" />
+                </ProgressBar.Track>
+              </ProgressBar.Root>
+            </div>
+          )}
+        </div>
+      </Card>
+    )
+  }
+  if (!hasAny) {
+    return (
+      <div className="grid flex-1 place-items-center p-10">
+        <EmptyState className="flex flex-col items-center gap-2">
+          <Icon name="picture" size={22} />
+          <p className="mt-2 text-sm font-semibold text-(--foreground)">开始设计你的主图</p>
+          <p className="text-center text-xs text-(--muted)">左侧选择主图和猫咪素材，输入提示词，一键合成</p>
+        </EmptyState>
+      </div>
+    )
+  }
+  const gridCols = (mainName && catName) ? '1fr 1fr' : '1fr'
+  return (
+    <Card variant="secondary" className="min-h-[300px] bg-(--background) p-5">
+      <div className="grid w-full gap-4" style={{ gridTemplateColumns: gridCols }}>
+        {mainName && (
+          <Card variant="tertiary" className="overflow-hidden">
+            <Card.Header className="flex items-center justify-between border-b border-(--border) px-3 py-2 text-xs font-bold">
+              <span>主图 Main</span>
+              <Chip size="sm" variant="secondary">BASE</Chip>
+            </Card.Header>
+            <Card.Content className="grid aspect-square place-items-center bg-(--background) p-2">
+              <SmartImg
+                bucket={BUCKET_MAIN} name={mainName} alt="main" brand={brand}
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+              />
+            </Card.Content>
+          </Card>
+        )}
+        {catName && (
+          <Card variant="tertiary" className="overflow-hidden">
+            <Card.Header className="flex items-center justify-between border-b border-(--border) px-3 py-2 text-xs font-bold">
+              <span>猫咪元素 Cat</span>
+              <Chip size="sm" variant="secondary" color="default">OVERLAY</Chip>
+            </Card.Header>
+            <Card.Content className="grid aspect-square place-items-center bg-(--background) p-2">
+              <SmartImg
+                bucket={BUCKET_CAT} name={catName} alt="cat" brand={brand}
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+              />
+            </Card.Content>
+          </Card>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+// ---------- MultiPreviewGrid：选中多张主图或多只猫咪时的网格预览 ----------
+function MultiPreviewGrid({ mains = [], cats = [], brand, pairStrategy = 'zip' }) {
+  const mainsSlice = mains.slice(0, 9)
+  const catsSlice = cats.slice(0, 6)
+  const moreMains = mains.length - mainsSlice.length
+  const moreCats = cats.length - catsSlice.length
+  const pairs = (() => {
+    if (!mains.length || !cats.length) return 0
+    if (pairStrategy === 'random') return mains.length
+    return Math.max(mains.length, cats.length)
+  })()
+  const colsFor = (n) => n <= 1 ? 1 : n <= 2 ? 2 : n <= 4 ? 2 : n <= 6 ? 3 : 3
+  const renderCard = (bucket, name, more = 0) => (
+    <div
+      key={name + (more ? '__more' : '')}
+      className="relative aspect-square overflow-hidden rounded-(--radius-xl) border border-(--border) bg-(--background)"
+    >
+      <SmartImg
+        bucket={bucket} name={name} alt="" brand={brand}
+        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+      />
+      {more > 0 && (
+        <div className="absolute inset-0 grid place-items-center text-xl font-extrabold tracking-wide text-(--foreground) backdrop-blur-sm"
+          style={{ background: 'color-mix(in srgb, var(--background) 62%, transparent)' }}>
+          +{more}
+        </div>
+      )}
+    </div>
+  )
+  return (
+    <Card variant="secondary" className="min-h-[320px] bg-(--background) p-4">
+      <div className="flex w-full flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h3 className="m-0 text-sm font-bold text-(--foreground)">多图批量预览</h3>
+          <Chip size="sm" variant="secondary" color="default">共 {mains.length} 张主图 × {cats.length} 张猫咪</Chip>
+          <Chip size="sm" variant="secondary">预计合成 {pairs} 对 · {pairStrategy === 'random' ? '随机猫咪匹配' : '按顺序'}</Chip>
+        </div>
+        <div className="grid items-start gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)' }}>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="inline-flex items-center gap-1 text-xs font-bold text-(--foreground)">
+                <Icon name="home" size={14} /> 主图（{mains.length}）
+              </span>
+              <Chip size="sm" variant="secondary">BASE</Chip>
+            </div>
+            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${colsFor(mainsSlice.length)}, 1fr)` }}>
+              {mainsSlice.map((n, i) => renderCard(BUCKET_MAIN, n, i === mainsSlice.length - 1 ? moreMains : 0))}
+            </div>
+          </div>
+
+          <div className="self-center px-1.5 pt-8 text-3xl font-black text-(--muted) select-none">×</div>
+
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="inline-flex items-center gap-1 text-xs font-bold text-(--foreground)">
+                <Icon name="cat" size={14} /> 猫咪（{cats.length}）
+              </span>
+              <Chip size="sm" variant="secondary" color="default">OVERLAY</Chip>
+            </div>
+            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${colsFor(catsSlice.length)}, 1fr)` }}>
+              {catsSlice.map((n, i) => renderCard(BUCKET_CAT, n, i === catsSlice.length - 1 ? moreCats : 0))}
+            </div>
+          </div>
+        </div>
+
+        <Surface variant="secondary" className="rounded-(--radius-xl) border border-(--border) px-3.5 py-2.5 text-xs leading-relaxed text-(--muted)">
+          <span style={{display:'inline-flex',alignItems:'center',gap:4,flexWrap:'wrap'}}><Icon name="check" size={12} /> 已进入 <b>批量模式</b>：点击下方<Icon name="magic" size={12} /> 批量合成 {pairs} 对</span>后，系统会依次把每一组提交给 NanoBanana 排队生成。
+          <br />
+          <span style={{display:'inline-flex',alignItems:'center',gap:4,flexWrap:'wrap'}}><Icon name="refresh" size={12} /> 本画布在批量时不切换状态，你可以继续选择素材、调整提示词；详细进度与结果可在 <span style={{display:'inline-flex',alignItems:'center',gap:4}}><Icon name="fileText" size={12} /> <b>生成记录</b></span> 面板查看，按预估时间递进，完成时会自动 Toast 通知。</span>
+        </Surface>
+      </div>
+    </Card>
+  )
+}
+
+// ---------- ModelSelectDropdown：模型参数下拉交互（默认选中 Nano Banana Pro + 记忆上次选择）----------
+function ModelSelectDropdown({ options = [], value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const current = useMemo(() => options.find(m => String(m.id) === String(value)), [options, value])
+
+  // 分组
+  const groups = useMemo(() => {
+    const isNanoFamily = (dn) => /nano\s*bana/i.test(dn || '')
+    const standard = []
+    const premium = []
+    const nanoFam = []
+    options.forEach(m => {
+      const dn = String(m.displayName || '')
+      const cost = parseInt(m.creditsCost, 10) || 1
+      if (isNanoFamily(dn)) nanoFam.push(m)
+      else if (cost >= 3) premium.push(m)
+      else standard.push(m)
+    })
+    const g = []
+    if (nanoFam.length) g.push({ title: 'Nano Banana 家族', items: nanoFam, accent: 'var(--foreground)', icon: bananaIcon, iconType: 'img' })
+    if (standard.length) g.push({ title: '标准（1 积分）', items: standard, accent: 'var(--success)', icon: <Icon name="check" size={14} /> })
+    if (premium.length) g.push({ title: '高级高清（2K / 4K / Pro）', items: premium, accent: 'var(--warning)', icon: <Icon name="target" size={14} /> })
+    return g
+  }, [options])
+
+  const costLabel = (m) => {
+    const c = parseInt(m.creditsCost, 10) || 1
+    return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <Icon name="walletOne" size={11} /> {c} 积分/张
+    </span>
+  }
+
+  const renderCard = (m, small = false) => {
+    const active = String(m.id) === String(value)
+    const proBadge = !!m.requiresPro
+    return (
+      <div
+        key={m.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => { onChange(m.id); setOpen(false) }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChange(m.id); setOpen(false) }
+        }}
+        className={[
+          'relative flex cursor-pointer flex-col gap-1 outline-none transition-colors duration-150',
+          small ? 'p-2' : 'p-3',
+          'rounded-(--radius-xl)',
+          active
+            ? 'border-2 border-(--foreground) bg-(--surface-tertiary)'
+            : 'border border-(--border) bg-(--surface-secondary) hover:border-(--border-strong)',
+          'focus-visible:ring-2 focus-visible:ring-(--focus)',
+        ].join(' ')}
+      >
+        {active && (
+          <span className="absolute right-2 top-1.5 text-xs font-extrabold text-(--foreground)">
+            <Icon name="check" size={12} />
+          </span>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5 pr-6">
+          <span className={['font-semibold', small ? 'text-xs' : 'text-[13px]'].join(' ')}>
+            {m.displayName || m.id}
+          </span>
+          {proBadge && <Chip size="sm" color="warning" variant="soft">PRO 会员</Chip>}
+          {m.default && !active && <Chip size="sm" variant="soft">默认</Chip>}
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5 text-[11px] opacity-80">
+          {m.speed && <span className="inline-flex items-center gap-1"><Icon name="fire" size={11} /> {m.speed}</span>}
+          <span>{costLabel(m)}</span>
+        </div>
+        {!small && m.description && (
+          <div className="text-[11px] leading-snug opacity-55">{String(m.description).slice(0, 72)}</div>
+        )}
+        {!small && Array.isArray(m.tags) && m.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {m.tags.slice(0, 3).map(t => <Chip key={t} size="sm" variant="secondary">{t}</Chip>)}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <Popover.Root isOpen={open} onOpenChange={setOpen}>
+      <Popover.Trigger className="w-full">
+        <HeroButton
+          variant="secondary"
+          className="h-auto w-full justify-start gap-3 rounded-(--radius-xl) px-3.5 py-2.5 text-left"
+        >
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-(--radius-lg) bg-(--surface-tertiary) text-(--foreground)">
+            <Icon name="magic" size={14} />
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="text-[13px] font-bold">{current?.displayName || '加载模型中…'}</span>
+              {current?.requiresPro && <Chip size="sm" color="warning" variant="soft">PRO 会员</Chip>}
+            </span>
+            <span className="flex flex-wrap items-center gap-2.5 text-[11px] opacity-80">
+              {current?.speed && <span className="inline-flex items-center gap-1"><Icon name="fire" size={11} /> {current.speed}</span>}
+              {current && costLabel(current)}
+            </span>
+          </span>
+          <span
+            className="shrink-0 text-sm text-(--muted) transition-transform duration-200"
+            style={{ transform: open ? 'rotate(180deg)' : 'none' }}
+            aria-hidden="true"
+          >▾</span>
+        </HeroButton>
+      </Popover.Trigger>
+
+      <Popover.Content
+        placement="bottom start"
+        offset={6}
+        className="z-[99999] p-2.5"
+        style={{ width: 'var(--trigger-width)', maxHeight: '56vh', overflow: 'auto' }}
+      >
+        <Popover.Dialog className="flex flex-col gap-3">
+          {options.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-5 text-xs text-(--muted)">
+              <Spinner size="sm" /> 模型列表加载中…
+            </div>
+          ) : (
+            groups.map(g => (
+              <section key={g.title} className="flex flex-col gap-1.5">
+                <header className="flex items-center gap-1.5 px-1 py-0.5">
+                  <span className="h-3.5 w-[3px] rounded-full" style={{ background: g.accent }} />
+                  {g.icon && (
+                    g.iconType === 'img'
+                      ? <img src={g.icon} alt="" className="h-[18px] w-[18px] rounded object-contain" />
+                      : <span className="inline-flex text-(--foreground)">{g.icon}</span>
+                  )}
+                  <span className="text-[11px] font-extrabold tracking-wide" style={{ color: g.accent }}>
+                    {g.title}
+                  </span>
+                  <span className="text-[10px] text-(--muted) opacity-70">共 {g.items.length} 个</span>
+                </header>
+                <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+                  {g.items.map(m => renderCard(m, false))}
+                </div>
+              </section>
+            ))
+          )}
+        </Popover.Dialog>
+      </Popover.Content>
+    </Popover.Root>
+  )
+}
+
+// ---------- BatchResults ----------
+// 状态 → HeroUI Chip 语义色（品牌主题色只留给实心主按钮与高亮文案）
+const BATCH_STATUS_META = {
+  success:          { color: 'success', text: '已完成' },
+  fail:             { color: 'danger',  text: '失败' },
+  pending_seedream: { color: 'default', text: '排队中' },
+  running:          { color: 'warning', text: '合成中' },
+  queued:           { color: 'default', text: '排队中' },
+}
+
+function BatchResults({ pairs, brand }) {
+  if (!pairs || pairs.length === 0) return null
+  return (
+    <Card className="max-h-[260px] min-h-[120px] overflow-auto">
+      <Card.Header className="flex items-center justify-between gap-2 border-b border-(--border) px-3.5 py-2.5">
+        <Card.Title className="text-sm font-semibold">本轮合成结果</Card.Title>
+        <Chip size="sm" variant="secondary">{pairs.length} 张</Chip>
+      </Card.Header>
+      <Card.Content className="flex flex-col gap-2 p-3">
+        {pairs.map((r, i) => {
+          // 修正：queued/running 不应被误判为「失败」，否则每张刚提交就显示失败
+          const meta = BATCH_STATUS_META[r.status] || { color: 'default', text: r.status || '处理中' }
+          return (
+            <div
+              key={i}
+              className="flex items-center gap-2.5 rounded-(--radius-lg) bg-(--surface-secondary) p-2"
+            >
+              <div className="h-10 w-10 shrink-0 overflow-hidden rounded-(--radius-md) bg-(--background)">
+                {r.name && r.status !== 'fail'
+                  ? <SmartImg
+                      bucket={BUCKET_OUT} name={r.name} alt="" brand={brand}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  : (
+                    <div className="grid h-full w-full place-items-center text-(--muted)">
+                      {r.status === 'fail' ? <Icon name="attention" size={11} /> : <Icon name="time" size={11} />}
+                    </div>
+                  )}
+              </div>
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="truncate text-xs font-semibold text-(--foreground)">{r.main} × {r.cat}</div>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-(--muted)">
+                  <Chip size="sm" color={meta.color} variant="soft">{meta.text}</Chip>
+                  {r.engine && <span className="opacity-70">· {r.engine}</span>}
+                  {r.message && <span className="opacity-60">· {r.message}</span>}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </Card.Content>
+    </Card>
+  )
+}
+
+// ---------- AssetPanel（严格对齐参考模板：标题行+dropzone+tip+统计+网格）----------
+function AssetPanel({ bucket, list, selected, onToggle, onDeleted, refresh, brand }) {
+  const fileRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const label = BUCKET_LABEL(brand)[bucket]
+  const color = DZ_COLOR[bucket]
+  const selectedTitle = bucket === BUCKET_MAIN ? '可用主图' : '猫咪素材库'
+  const hasSel = selected.length > 0
+
+  return (
+    <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Card.Header className="!flex-row items-center gap-2">
+        <span className="shrink-0 text-(--foreground)">
+          {DZ_ICON[bucket]}
+        </span>
+        <Card.Title className="whitespace-nowrap text-sm font-semibold">{label}</Card.Title>
+      </Card.Header>
+
+      <Card.Content className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-(--foreground)">{selectedTitle}</span>
+          <Chip size="sm" color="default" variant="secondary">
+            已选 {selected.length}/{list.length}
+          </Chip>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ImageGrid
+            bucket={bucket}
+            list={list}
+            selected={selected}
+            onToggle={onToggle}
+            onDeleted={onDeleted}
+            brand={brand}
+            addTile={
+              <SimpleDropzone
+                tile
+                bucket={bucket}
+                fileInputRef={fileRef}
+                onUploaded={refresh}
+                busy={busy}
+                setBusy={setBusy}
+                brand={brand}
+              />
+            }
+          />
+        </div>
+      </Card.Content>
+    </Card>
+  )
+}
+
+// ---------- DesignStudio（三栏 HeroUI 暗色布局）----------
+function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
+  const [mainList, setMainList] = useState([])
+  const [catList, setCatList] = useState([])
+  const [selMains, setSelMains] = useState([])
+  const [selCats, setSelCats] = useState([])
+
+  const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [stageStatus, setStageStatus] = useState(null)
+  const [stageMessage, setStageMessage] = useState('')
+  const progressTimerRef = useRef(null)
+  const [pairs, setPairs] = useState([])
+  const [previewName, setPreviewName] = useState('')
+
+  const [prompt, setPrompt] = useState(() => DEFAULT_PROMPT(brand))
+  const [width, setWidth] = useState(1024)
+  const [height, setHeight] = useState(1024)
+  const [pairStrategy, setPairStrategy] = useState('random')
+  const [reusePrompt, setReusePrompt] = useState(true)
+
+  // NanoBanana 模型选择：读取 localStorage 记忆的上次模型，首次没有时后面 useEffect 里 fallback "Nano Banana Pro"
+  const [model, setModelState] = useState(() => {
+    try { return window.localStorage.getItem(lastModelKey(account)) } catch { return null }
+  })
+  const [modelList, setModelList] = useState([])
+  const setModel = useCallback((id) => {
+    setModelState(id)
+    try { window.localStorage.setItem(lastModelKey(account), String(id)) } catch {}
+  }, [])
+  const currentModel = useMemo(() => modelList.find(m => String(m.id) === String(model)), [modelList, model])
+
+  // 切换品牌时：把提示词重置为该品牌的默认文案（避免家纺 vs 沙发套串词）
+  useEffect(() => {
+    setPrompt(DEFAULT_PROMPT(brand))
+  }, [brand])
+
+  // 初始化加载可用模型列表并设置默认
+  useEffect(() => {
+    let mounted = true
+    api.models()
+      .then(res => {
+        if (!mounted) return
+        const list = Array.isArray(res?.models) ? res.models : []
+        setModelList(list)
+        // 优先级：
+        // 1) 用户 localStorage 里记忆的 tk:last-model（只要 id 在当前列表中就用）
+        // 2) displayName 精确包含 "Nano Banana Pro"（不含 2K / 4K / Fast 后缀）—— 用户要求默认 Nano Banana Pro
+        // 3) 后端声明的 default
+        // 4) 第一个 default: true 的模型
+        // 5) 兜底 list[0]
+        let wantId = null
+        try {
+          const saved = window.localStorage.getItem(lastModelKey(account))
+          if (saved && list.find(m => String(m.id) === String(saved))) wantId = saved
+        } catch {}
+        if (!wantId) {
+          const pro = list.find(m => /^nano\s*banana\s*pro$/i.test(String(m.displayName || '').trim()))
+          if (pro) wantId = pro.id
+        }
+        if (!wantId && res?.default) {
+          const d = list.find(m => String(m.id) === String(res.default))
+          if (d) wantId = d.id
+        }
+        if (!wantId) wantId = (list.find(m => m.default) || list[0])?.id
+        if (wantId) {
+          setModelState(wantId)
+          try { window.localStorage.setItem(lastModelKey(account), String(wantId)) } catch {}
+        }
+      })
+      .catch(() => {})
+    return () => { mounted = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 进度动画
+  const startFakeProgress = (step = 2, speedMs = 420, cap = 92) => {
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current)
+    progressTimerRef.current = setInterval(() => {
+      setProgress(p => {
+        const next = p + step + Math.random() * 1.5
+        return next >= cap ? cap : next
+      })
+    }, speedMs)
+  }
+  const stopFakeProgress = (finalVal = 100) => {
+    if (progressTimerRef.current) { clearInterval(progressTimerRef.current); progressTimerRef.current = null }
+    setProgress(finalVal)
+  }
+  useEffect(() => () => stopFakeProgress(100), [])
+
+  const refreshMains = useCallback(() => {
+    api.images(BUCKET_MAIN, { brand })
+      .then(d => setMainList(d.images || []))
+      .catch(() => setMainList([]))
+  }, [brand])
+  const refreshCats = useCallback(() => {
+    api.images(BUCKET_CAT, { brand })
+      .then(d => setCatList(d.images || []))
+      .catch(() => setCatList([]))
+  }, [brand])
+  useEffect(() => { refreshMains(); refreshCats() }, [refreshMains, refreshCats, brand])
+
+  const deleteImg = (bucket, name) => {
+    api.deleteImg(bucket, name, { brand }).then(() => {
+      Toast.success('已删除')
+      if (bucket === BUCKET_MAIN) {
+        refreshMains()
+        setSelMains(s => s.filter(n => n !== name))
+      } else {
+        refreshCats()
+        setSelCats(s => s.filter(n => n !== name))
+      }
+    }).catch(e => Toast.error(e.message))
+  }
+
+  const toggleSel = (setFn, name, want) => {
+    setFn(prev => {
+      const has = prev.includes(name)
+      if (want === false || (want !== true && has)) return prev.filter(n => n !== name)
+      if (has) return prev
+      return [...prev, name]
+    })
+  }
+
+  const isMultiPreview = selMains.length > 1 || selCats.length > 1
+  // 单张也走网格预览：只要有选中（且不在结果/生成态）就复用 MultiPreviewGrid，
+  // 避免「单独一张大图」；结果预览与生成进度仍由 CanvasPreview 负责。
+  const hasResultView = !!previewName && !loading && stageStatus !== 'pending_seedream'
+  const hasStageView = loading || (stageStatus && stageStatus !== 'success' && stageStatus !== 'pending_seedream')
+  const showGrid = (selMains.length > 0 || selCats.length > 0) && !hasResultView && !hasStageView
+  const previewMain = selMains[selMains.length - 1]
+  const previewCat = selCats[selCats.length - 1]
+  const pairCount = useMemo(() => {
+    if (!selMains.length || !selCats.length) return 0
+    // random 策略：每张主图配一张随机猫咪（猫咪池不足则循环），总对数 = 主图数
+    if (pairStrategy === 'random') return selMains.length
+    // zip 策略（按顺序）：i % mains × i % cats → 对数 = max(mains, cats)
+    return Math.max(selMains.length, selCats.length)
+  }, [selMains, selCats, pairStrategy])
+
+  // NanoBanana 模型选择：读取 localStorage 记忆的上次模型
+  const doSingle = async () => {
+    if (!previewMain || !previewCat) { Toast.warning('请至少选择 1 张主图 + 1 张猫咪图'); return }
+    setLoading(true); setProgress(5); setStageStatus('running'); setStageMessage('任务排队中…'); setPairs([])
+    // ====== 假进度慢慢爬到 99% 就卡住，真实 success 回调（图片返回）直接冲 100% ======
+    startFakeProgress(0.7, 1000, 99)
+    stopBatchPoll()
+    try {
+      const r = await api.synthesize({
+        main_image: previewMain, cat_image: previewCat,
+        prompt, width, height,
+        model, brand,
+      })
+      // 消耗了积分 → 立即刷新顶部积分显示
+      window.dispatchEvent(new Event('app:refresh-credits'))
+      const bid = r.batch_id
+      const queuedStatus = r.status || 'queued'
+      setCurrentBatch(r)
+      setPairs([{
+        main: previewMain, cat: previewCat,
+        status: queuedStatus, name: '', engine: r.engine || 'NanoBanana', message: '后台排队中…',
+      }])
+      if (queuedStatus === 'queued' || queuedStatus === 'running') {
+        Toast.success(`已加入生成队列（单张）：后台正在依次合成`)
+      }
+      let running = true
+      let lastPreviewName = ''
+      const pollOne = async () => {
+        if (!running) return
+        try {
+          const st = await api.batchStatus(bid, { brand })
+          setCurrentBatch(st)
+          const prog = st.progress || 0
+          // 关键修复：单张合成时后端 progress 恒为 0（子项完成后才置 100）。
+          // 若每次轮询都用 prog 调 setProgress，会把 startFakeProgress 的爬升动画
+          // 每 3 秒打回 5%，导致进度条一直卡在 5% 不动（"五分钟没生成"的直接观感来源）。
+          // 这里只在后端有真实进度（批量多张逐步推进）时才同步，否则保留假进度爬升。
+          if (prog > 0) setProgress(Math.min(Math.max(prog, 5), 99))
+          const items = st.items || []
+          const pairs = items.map(it => ({
+            main: it.main, cat: it.cat, status: it.status,
+            name: it.output_name, error: it.error,
+            elapsed: it.elapsed_sec,
+          }))
+          setPairs(pairs)
+          const lastOk = [...items].reverse().find(it => it.status === 'success' && it.output_name)
+          if (lastOk) lastPreviewName = lastOk.output_name
+          const el = (items[0] && items[0].elapsed_sec != null) ? Math.round(items[0].elapsed_sec) : null
+          // 后端生成过程中 elapsed_sec 尚未写入，改用 started_at 实时计算已耗时，让"在跑"有感知
+          let elapsedTxt = '…'
+          if (el != null && el > 0) {
+            elapsedTxt = el + 's'
+          } else if (st.status === 'running' && st.started_at) {
+            const t0 = new Date(st.started_at).getTime()
+            if (!isNaN(t0)) elapsedTxt = Math.max(0, Math.round((Date.now() - t0) / 1000)) + 's'
+          }
+          setStageMessage(
+            st.status === 'running'
+              ? `AI 合成中… 已耗时 ${elapsedTxt}（单张约 1-5 分钟，请耐心等待）`
+              : `${st.status} · 成功 ${st.ok || 0} · 失败 ${st.fail || 0} · 待 ${st.pending || 0}`
+          )
+          const stopStates = { success: 1, fail: 1, partial: 1 }
+          if (stopStates[st.status]) {
+            running = false
+            setLoading(false)
+            const failed = (st.fail || 0) > 0
+            const first = items[0]
+            if (!failed) {
+              stopFakeProgress(100)
+              setProgress(100) // ====== 真实图片返回 → 100% ======
+              setStageStatus('success'); setStageMessage('')
+              if (lastPreviewName) setPreviewName(lastPreviewName)
+              Toast.success('合成完成')
+            } else {
+              stopFakeProgress(99) // ====== 失败 → 停在 99%，不冲 100 ======
+              setStageStatus('fail')
+              setStageMessage(first?.error || '合成失败')
+              Toast.error('合成失败: ' + (first?.error || '未知错误'))
+            }
+            window.dispatchEvent(new CustomEvent('tk:refresh-results'))
+            if (onSwitchTab) setTimeout(() => onSwitchTab('results'), 550)
+          } else {
+            setTimeout(pollOne, 3000)
+          }
+        } catch (e) {
+          if (!running) return
+          setTimeout(pollOne, 5000)
+        }
+      }
+      setBatchPollStop(() => () => { running = false })
+      setTimeout(pollOne, 1500)
+    } catch (e) {
+      stopFakeProgress(99)
+      setStageStatus('fail'); setStageMessage(e.message)
+      Toast.error('提交失败: ' + e.message)
+      setTimeout(() => setLoading(false), 420)
+    }
+  }
+
+  const [currentBatch, setCurrentBatch] = useState(null)
+  const [batchPollStop, setBatchPollStop] = useState(() => null)
+
+  const stopBatchPoll = () => {
+    if (batchPollStop) { try { batchPollStop() } catch {} }
+    setBatchPollStop(null)
+  }
+
+  useEffect(() => () => stopBatchPoll(), [])
+
+  // ====== 用户期望的批量模式：只 Toast 提交结果，后台静默轮询，结束后再 Toast 完成 + 刷新【生成记录】======
+  const doBatch = async () => {
+    if (!selMains.length || !selCats.length) {
+      Toast.warning('请选择主图和猫咪图（支持多张批量）'); return
+    }
+    stopBatchPoll()
+    // 注意：这里不 setLoading/setProgress/setStageStatus/setPairs
+    // 按用户期望：「主页可以不用展示正在合成主图，只返回任务提交成功/失败 toast，记录同步到结果图库/生成记录」
+    try {
+      const init = await api.batch({
+        main_images: selMains, cat_images: selCats,
+        prompt, width, height,
+        pair_strategy: pairStrategy,
+        model, brand,
+      })
+      setCurrentBatch(init)
+      // 消耗了积分 → 立即刷新顶部积分显示
+      window.dispatchEvent(new Event('app:refresh-credits'))
+      const bid = init.batch_id
+      const total = init.total || 0
+      // 仅 Toast：提交成功（不要 setPreviewName / 不要 switchTab / 不要改 canvas 状态）
+      Toast.success(`批量任务已提交（${total} 对），后台依次排队合成，进度和结果可在【生成记录】中查看`)
+      let running = true
+      const pollOne = async () => {
+        if (!running) return
+        try {
+          const st = await api.batchStatus(bid, { brand })
+          const stopStates = { success: 1, fail: 1, partial: 1 }
+          if (stopStates[st.status]) {
+            running = false
+            const ok = st.ok || 0, fail = st.fail || 0, totalN = st.total || total
+            const msg = `批量完成：成功 ${ok} · 失败 ${fail} · 共 ${totalN} 对`
+            if (fail > 0) Toast.warning(msg); else Toast.success(msg)
+            // 派发全局事件 → 结果图库和生成记录面板同步刷新
+            window.dispatchEvent(new CustomEvent('tk:refresh-results'))
+          } else {
+            setTimeout(pollOne, 3000)
+          }
+        } catch (e) {
+          if (!running) return
+          setTimeout(pollOne, 5000)
+        }
+      }
+      setBatchPollStop(() => () => { running = false })
+      setTimeout(pollOne, 1500)
+    } catch (e) {
+      Toast.error('批量提交失败: ' + e.message)
+    }
+  }
+
+  const clearPreview = () => setPreviewName('')
+
+  // 画布底部状态文本（严格对齐参考模板：无数量、纯文字风格）
+  const canvasHint = (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Chip size="sm" variant="secondary">主图</Chip>
+      <span className="text-(--muted)">+</span>
+      <Chip size="sm" variant="secondary" color="default">猫咪</Chip>
+      <span className="text-(--muted)">=</span>
+      <Chip
+        size="sm"
+        variant="soft"
+        color={previewName ? 'success' : stageStatus === 'running' ? 'default' : 'default'}
+      >
+        {previewName ? '已合成' : stageStatus === 'running' ? 'AI 合成中…' : '待合成'}
+      </Chip>
+    </div>
+  )
+
+  return (
+    <div className="workspace hero-page">
+      {/* ====== 左栏：素材（workspace-col）====== */}
+      <section className="workspace-col workspace-col--stacked">
+        <AssetPanel
+          bucket={BUCKET_MAIN}
+          list={mainList}
+          selected={selMains}
+          onToggle={(n, w) => toggleSel(setSelMains, n, w)}
+          onDeleted={(n) => deleteImg(BUCKET_MAIN, n)}
+          refresh={refreshMains}
+          brand={brand}
+        />
+        <AssetPanel
+          bucket={BUCKET_CAT}
+          list={catList}
+          selected={selCats}
+          onToggle={(n, w) => toggleSel(setSelCats, n, w)}
+          onDeleted={(n) => deleteImg(BUCKET_CAT, n)}
+          refresh={refreshCats}
+          brand={brand}
+        />
+      </section>
+
+      {/* ====== 中栏：预览画布 ====== */}
+      <section className="workspace-col">
+        <Card className="min-h-0 flex-1 overflow-hidden">
+          <Card.Header className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Icon name="monitor" size={16} />
+              <Card.Title className="text-sm font-semibold">预览画布 Canvas</Card.Title>
+            </div>
+            {stageStatus === 'running' ? (
+              <Chip size="sm" color="default" variant="soft">
+                <Spinner size="sm" /> AI 合成中…
+              </Chip>
+            ) : stageStatus === 'pending_seedream' ? (
+              <Chip size="sm" color="default" variant="soft">⏳ Seedream 排队生成中</Chip>
+            ) : stageStatus === 'fail' ? (
+              <Chip size="sm" color="danger" variant="soft"><Icon name="attention" size={12} /> 合成失败</Chip>
+            ) : previewName ? (
+              <Chip size="sm" color="success" variant="soft"><Icon name="magic" size={12} /> 最新合成图</Chip>
+            ) : (
+              <Chip size="sm" variant="secondary">实时预览所选</Chip>
+            )}
+          </Card.Header>
+
+          <Card.Content className="flex min-h-0 flex-1 flex-col gap-3">
+            <div className="relative flex min-h-0 w-full flex-1 flex-col">
+              {loading && (
+                <div
+                  className="absolute inset-0 z-10 grid place-items-center rounded-(--radius-xl) border border-(--border-strong) backdrop-blur-md"
+                  style={{ background: 'color-mix(in srgb, var(--background) 72%, transparent)' }}
+                >
+                  <div className="min-w-[300px] p-6 text-center">
+                    <div
+                      className="mx-auto mb-4 grid h-20 w-20 place-items-center rounded-full border"
+                      style={{
+                        background: 'var(--surface-tertiary)',
+                        borderColor: 'var(--border-strong)',
+                      }}
+                    >
+                      <Spinner size="lg" />
+                    </div>
+                    <div className="mb-1.5 text-lg font-extrabold text-(--foreground)">正在合成主图…</div>
+                    <div className="mb-4 text-[13px] text-(--muted)">
+                      主图 + 猫咪元素正在通过 AI 合成，通常需要数秒
+                    </div>
+                    <div className="w-full">
+                      <ProgressBar.Root value={Math.round(progress)} maxValue={100} className="w-full">
+                        <ProgressBar.Track><ProgressBar.Fill /></ProgressBar.Track>
+                      </ProgressBar.Root>
+                      <div className="mt-2 flex items-center justify-between text-xs font-semibold text-(--muted)">
+                        <span>AI 合成进度</span>
+                        <ProgressBar.Output className="text-(--foreground)">
+                          {`${Math.round(progress)}%`}
+                        </ProgressBar.Output>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {showGrid ? (
+                <MultiPreviewGrid
+                  mains={selMains}
+                  cats={selCats}
+                  brand={brand}
+                  pairStrategy={pairStrategy}
+                />
+              ) : (
+                <CanvasPreview
+                  mainName={previewMain} catName={previewCat} outputName={previewName}
+                  loading={loading} stageStatus={stageStatus} stageMessage={stageMessage}
+                  progress={progress}
+                  brand={brand}
+                />
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-(--border) pt-3">
+              <div>{canvasHint}</div>
+              <div className="flex gap-2">
+                {previewName && !showGrid && (
+                  <HeroButton variant="secondary" onPress={clearPreview}>
+                    <Icon name="left" size={12} /> 回预览
+                  </HeroButton>
+                )}
+                <HeroButton
+                  variant="primary"
+                  onPress={pairCount > 1 ? doBatch : doSingle}
+                  isDisabled={loading || selMains.length === 0 || selCats.length === 0}
+                >
+                  {loading
+                    ? <Spinner size="sm" />
+                    : <Icon name="magic" size={12} />}
+                  {pairCount > 1 ? `批量合成 ${pairCount} 对` : '一键合成'}
+                </HeroButton>
+              </div>
+            </div>
+          </Card.Content>
+        </Card>
+
+        {pairs.length > 0 && <BatchResults pairs={pairs} brand={brand} />}
+      </section>
+
+      {/* ====== 右栏：提示词 + 参数 ====== */}
+      <section className="workspace-col">
+        {/* 提示词卡 */}
+        <Card>
+          <Card.Header className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="grid h-5 w-5 place-items-center rounded-(--radius-sm) bg-(--surface-tertiary) text-[11px] font-extrabold text-(--foreground)">
+                T
+              </span>
+              <Card.Title className="text-sm font-semibold">提示词 Prompt</Card.Title>
+            </div>
+          </Card.Header>
+
+          <Card.Content className="flex flex-col gap-3">
+            <div className="relative">
+              <HeroTextArea
+                value={prompt}
+                onChange={(e) => setPrompt(e && e.target ? e.target.value : e)}
+                placeholder="描述你想要的融合效果，例如：一只可爱的猫咪慵懒地趴在床上，阳光洒落，温馨舒适..."
+                rows={6}
+                fullWidth
+                className="pb-10"
+              />
+              <HeroButton
+                variant="secondary"
+                size="sm"
+                isIconOnly
+                title="AI 润色"
+                className="absolute bottom-2.5 right-2.5"
+                onPress={() => Toast.info('AI 润色：功能占位')}
+              >
+                <Icon name="magic" size={14} />
+              </HeroButton>
+            </div>
+
+            <HeroCheckbox isSelected={reusePrompt} onChange={(v) => setReusePrompt(!!v)}>
+              <HeroCheckbox.Content>
+                <HeroCheckbox.Control>
+                  <HeroCheckbox.Indicator />
+                </HeroCheckbox.Control>
+                批量模式下复用此提示词
+              </HeroCheckbox.Content>
+            </HeroCheckbox>
+          </Card.Content>
+        </Card>
+
+        {/* 参数设置卡 */}
+        <Card className="min-h-0 flex-1 overflow-hidden flex flex-col">
+          <Card.Header className="shrink-0">
+            <div className="flex items-center gap-2">
+              <Icon name="adjustment" size={16} />
+              <Card.Title className="text-sm font-semibold">参数设置</Card.Title>
+            </div>
+          </Card.Header>
+
+          <Card.Content className="flex flex-col gap-4 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
+            {/* AI 模型（chip 主显示 + 下拉分组：Nano Banana 家族 / 标准 1 积分 / 高级高清）*/}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-(--foreground)">AI 模型</span>
+                {currentModel?.requiresPro && (
+                  <Chip size="sm" color="warning" variant="soft">
+                    <Icon name="crown" size={11} /> PRO 会员模型
+                  </Chip>
+                )}
+              </div>
+              <ModelSelectDropdown
+                options={modelList}
+                value={model}
+                onChange={setModel}
+              />
+              {modelList.length > 0 && (
+                <p className="mt-1 text-[11px] leading-relaxed text-(--muted)">
+                  · 已默认选中「Nano Banana Pro」；切换模型后会自动记忆，下次打开沿用你上次选择。
+                  <br />
+                  · 含 2K / 4K / Pro 的模型画质更精细，消耗积分也更高，请根据实际场景选择。
+                </p>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* 画布尺寸 */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-(--foreground)">画布尺寸</span>
+              <div className="grid grid-cols-2 gap-2">
+                <HeroInput
+                  type="number"
+                  value={width}
+                  onChange={(e) => setWidth(Number(e.target.value) || 1024)}
+                  aria-label="宽"
+                  min={256}
+                  max={4096}
+                  step={8}
+                />
+                <HeroInput
+                  type="number"
+                  value={height}
+                  onChange={(e) => setHeight(Number(e.target.value) || 1024)}
+                  aria-label="高"
+                  min={256}
+                  max={4096}
+                  step={8}
+                />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {SIZE_PRESETS.map(p => {
+                  const active = p.w === width && p.h === height
+                  return (
+                    <HeroButton
+                      key={p.label}
+                      size="sm"
+                      variant={active ? 'secondary' : 'outline'}
+                      onPress={() => { setWidth(p.w); setHeight(p.h) }}
+                    >
+                      {p.label}
+                    </HeroButton>
+                  )
+                })}
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* 批量组对策略（卡片式单选）。已删除笛卡尔积。*/}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-(--foreground)">批量组对策略</span>
+              <RadioGroup
+                value={pairStrategy}
+                onChange={setPairStrategy}
+                className="grid grid-cols-2 gap-2"
+              >
+                {PAIR_STRATEGIES(brand).map(o => (
+                  <Radio
+                    key={o.value}
+                    value={o.value}
+                    className={[
+                      'rounded-(--radius-xl) border p-2.5 transition-colors duration-150',
+                      pairStrategy === o.value
+                        ? 'border-(--foreground) bg-(--surface-tertiary)'
+                        : 'border-(--border) bg-(--surface-secondary) hover:border-(--border-strong)',
+                    ].join(' ')}
+                  >
+                    <Radio.Content className="flex items-start gap-2">
+                      <Radio.Control><Radio.Indicator /></Radio.Control>
+                      <span className="flex flex-col gap-1">
+                        <span className="text-xs font-semibold">{o.label}</span>
+                        {o.hint && (
+                          <span className="text-[11px] leading-snug text-(--muted)">{o.hint}</span>
+                        )}
+                      </span>
+                    </Radio.Content>
+                  </Radio>
+                ))}
+              </RadioGroup>
+            </div>
+
+            {/* 底部汇总 */}
+            <Surface
+              variant="secondary"
+              className="mt-auto flex items-center justify-between gap-2 rounded-(--radius-xl) border border-(--border) px-3 py-2 text-xs text-(--muted)"
+            >
+              <span>将合成 <b className="text-(--accent)">{pairCount}</b> 张主图</span>
+              <Chip size="sm" variant="secondary">待合成 {pairCount} 对</Chip>
+            </Surface>
+          </Card.Content>
+        </Card>
+      </section>
+    </div>
+  )
+}
+
+// ---------- CatsGallery ----------
+function CatsGallery({ brand }) {
+  const fileRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [list, setList] = useState([])
+  const [kw, setKw] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [delConfirm, setDelConfirm] = useState(null)
+
+  const refresh = useCallback(() => {
+    api.images(BUCKET_CAT, { brand })
+      .then(d => setList(d.images || []))
+      .catch(() => setList([]))
+  }, [brand])
+  useEffect(() => { refresh() }, [refresh, brand])
+
+  const deleteOne = async (name) => {
+    try {
+      await api.deleteImg(BUCKET_CAT, name, { brand })
+      Toast.success('已删除 ' + name)
+      setDelConfirm(null); refresh()
+    } catch (e) { Toast.error(e.message) }
+  }
+
+  const filtered = list.filter(it => {
+    if (!kw) return true
+    return it.name.toLowerCase().includes(kw.toLowerCase())
+  })
+
+  const onUploaded = useCallback(() => refresh(), [refresh])
+
+  return (
+    <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+      <div className="tk-panel" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 280px', minWidth: 240 }}>
+            <Input
+              value={kw}
+              onChange={(v) => setKw(v)}
+              placeholder="搜索猫咪素材名称…"
+              showClear
+              prefix={<Icon name="search" size={14} style={{ color: 'var(--text-muted)' }} />}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="tk-chip">共 {list.length} 张素材</span>
+            {kw && <Tag color="cyan" size="small">匹配 {filtered.length}</Tag>}
+            <Button theme="light" onClick={refresh}>⟳ 刷新</Button>
+          </div>
+        </div>
+        <SimpleDropzone
+          bucket={BUCKET_CAT}
+          fileInputRef={fileRef}
+          onUploaded={onUploaded}
+          busy={busy}
+          setBusy={setBusy}
+          brand={brand}
+        />
+      </div>
+      <div className="tk-panel" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+        {filtered.length === 0 ? (
+          <div className="tk-empty">
+            <span className="emoji">{kw ? <Icon name="search" size={20} /> : <Icon name="inbox" size={20} />}</span>
+            {kw ? `没有匹配「${kw}」的素材` : '还没有猫咪素材，在上方粘贴或拖入图片吧～'}
+          </div>
+        ) : (
+          <div className="library-grid" style={{ padding: '4px 14px 18px' }}>
+            {filtered.map(it => (
+              <div key={it.name} className="library-card">
+                <div className="thumb" onClick={() => setPreview(it)} style={{ cursor: 'zoom-in' }}>
+                  <img src={api.imageUrl(BUCKET_CAT, it.name, { brand })} alt={it.name} loading="lazy" />
+                </div>
+                <div className="meta">
+                  <div className="sub">
+                    <span>{it.mtimeText?.slice(0, 10) || ''}</span>
+                    <span style={{ display: 'flex', gap: 6 }}>
+                      <Tooltip content="预览大图">
+                        <Button size="small" theme="light" onClick={() => setPreview(it)}><Icon name="view" size={12} /></Button>
+                      </Tooltip>
+                      <Tooltip content="删除素材">
+                        <Button size="small" theme="light" type="danger" onClick={() => setDelConfirm(it)}><Icon name="delete" size={12} /></Button>
+                      </Tooltip>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <Modal
+        title="猫咪素材预览"
+        visible={!!preview}
+        onCancel={() => setPreview(null)}
+        motion={false}
+        keepDOM={false}
+        width={720}
+        footer={
+          <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+            <button
+              className="preview-btn preview-btn-ghost"
+              onClick={() => {
+                if (!preview) return
+                const a = document.createElement('a')
+                a.href = api.imageUrl(BUCKET_CAT, preview.name, { brand })
+                a.download = preview.name
+                document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 500)
+              }}
+            >
+              <Icon name="download" size={13} /> 下载
+            </button>
+            <button className="preview-btn preview-btn-danger" onClick={() => preview && setDelConfirm(preview)}>
+              <Icon name="delete" size={13} /> 删除
+            </button>
+            <button className="preview-btn preview-btn-solid" onClick={() => setPreview(null)}>关闭</button>
+          </div>
+        }
+      >
+        {preview && (
+          <div style={{ width: '100%', height: '70vh', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface-tertiary)' }}>
+            <img
+              src={api.imageUrl(BUCKET_CAT, preview.name, { brand })}
+              alt=""
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
+            />
+          </div>
+        )}
+      </Modal>
+      <Modal
+        title="确认删除"
+        visible={!!delConfirm}
+        onCancel={() => setDelConfirm(null)}
+        onOk={() => delConfirm && deleteOne(delConfirm.name)}
+        okType="danger"
+        okText="删除"
+        motion={false}
+        keepDOM={false}
+      >
+        <p>你将删除猫咪素材 <b>{delConfirm?.name}</b>，删除后无法恢复。</p>
+      </Modal>
+    </div>
+  )
+}
+
+
+// ---------- SelectableGrid / LibSection（统一操作规则：点击勾选 + 右上角删除/导出，默认 mtime 排序） ----------
+function SelectableGrid({ items = [], brand, selected, onToggle, onPreview, emptyIcon = 'magic', emptyText }) {
+  const gridRef = useRef(null)
+  const wrapW = useContainerWidth(gridRef)
+  const [dims, reportDim] = useImageDims(items.map(it => it.name), n => api.imageUrl(BUCKET_OUT, n, { brand }))
+  const layout = layoutMasonryRowMajor(items, dims, wrapW || 880, 220, 12)
+
+  if (items.length === 0) {
+    return (
+      <EmptyState className="m-auto">
+        <Icon name={emptyIcon} size={22} />
+        <p className="mt-2 text-center text-xs text-(--muted)">{emptyText}</p>
+      </EmptyState>
+    )
+  }
+
+  return (
+    <div ref={gridRef} className="px-3 pb-5" style={{ position: 'relative', height: layout.totalH, minHeight: 200 }}>
+      {layout.placed.map(it => {
+        const isSelected = selected.has(it.name)
+        return (
+          <div
+            key={it.name}
+            title={it.name}
+            className="cursor-pointer rounded-xl overflow-hidden border border-(--border) bg-(--surface-tertiary) hover:border-(--border-strong) transition-colors"
+            style={{ position: 'absolute', left: it._x, top: it._y, width: it._w, height: it._h }}
+            onClick={() => onToggle(it.name)}
+          >
+            <div className="thumb" style={{ cursor: isSelected ? 'zoom-out' : 'zoom-in', position: 'relative', width: '100%', height: '100%' }}>
+              <SmartImg bucket={BUCKET_OUT} name={it.name} alt={it.name} loading="lazy" brand={brand} onNaturalSize={reportDim}
+                style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }} />
+              {/* 右上角勾选框（常驻） */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onToggle(it.name) }}
+                title={isSelected ? '取消勾选' : '勾选'}
+                aria-pressed={isSelected}
+                style={{
+                  position: 'absolute', top: 8, right: 8, zIndex: 3,
+                  width: 22, height: 22, borderRadius: 6,
+                  background: isSelected ? 'var(--foreground)' : 'rgba(24,24,27,.55)',
+                  color: isSelected ? 'var(--background)' : '#fff',
+                  border: isSelected ? '1px solid var(--foreground)' : '1px solid rgba(255,255,255,.2)',
+                  cursor: 'pointer', padding: 0,
+                  display: 'grid', placeItems: 'center',
+                  lineHeight: 1, fontSize: 14, fontWeight: 900,
+                  backdropFilter: 'blur(4px)',
+                }}
+              >
+                {isSelected ? <Icon name="check" size={11} /> : ''}
+              </button>
+              {/* 左下角小眼睛按钮：毛玻璃白底圆球 + icon */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onPreview && onPreview(it) }}
+                aria-label="预览大图"
+                title="预览大图"
+                style={{
+                  position: 'absolute', bottom: 8, left: 8, zIndex: 3,
+                  width: 32, height: 32, borderRadius: '50%',
+                  background: 'rgba(255,255,255,.2)',
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                  border: '1px solid rgba(255,255,255,.35)',
+                  color: '#fff', cursor: 'pointer', padding: 0,
+                  display: 'grid', placeItems: 'center',
+                  boxShadow: '0 2px 8px rgba(0,0,0,.15)',
+                }}
+              >
+                <Icon name="view" size={14} />
+              </button>
+              {/* 选中遮罩：中性前景色，不使用品牌主题色 */}
+              {isSelected && (
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  background: 'color-mix(in srgb, var(--foreground) 16%, transparent)',
+                  border: '3px solid var(--foreground)',
+                  display: 'grid', placeItems: 'center',
+                  pointerEvents: 'none',
+                }}>
+                  <div className="grid h-10 w-10 place-items-center rounded-full bg-(--foreground) text-(--background)">
+                    <Icon name="check" size={14} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon = 'magic', onPreview, onRefresh }) {
+  const [selected, setSelected] = useState(() => new Set())
+  const [delConfirm, setDelConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  const toggle = (name) => setSelected(prev => {
+    const n = new Set(prev)
+    if (n.has(name)) n.delete(name); else n.add(name)
+    return n
+  })
+  const clearSel = () => setSelected(new Set())
+
+  const doExport = async () => {
+    const names = items.filter(it => selected.has(it.name)).map(it => it.name)
+    if (!names.length) { Toast.warning('请先勾选要导出的图片'); return }
+    setExporting(true)
+    try {
+      // 本轮唯一批次戳（秒级），保证跨轮导出文件名不重复
+      const d = new Date()
+      const pad = (n) => String(n).padStart(2, '0')
+      const ts = `${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+      const br = brand || 'cloudsleepgarden'
+
+      if (names.length <= 5) {
+        // ≤5 张：单张逐个下载原图（同源直链，无打包等待）
+        for (let i = 0; i < names.length; i++) {
+          const nm = names[i]
+          const seq = String(i + 1).padStart(2, '0')
+          const m = nm.match(/\.(png|jpe?g|webp|gif|svg)$/i)
+          const ext = m ? m[0] : '.png'
+          const out = `${ts}_${seq}_${nm.slice(0, -ext.length)}${ext}`
+          const a = document.createElement('a')
+          a.href = api.imageUrl(BUCKET_OUT, nm, { brand: br })
+          a.download = out
+          document.body.appendChild(a); a.click(); a.remove()
+          // 逐张间隔，避免浏览器把多次下载合并成一次询问
+          await new Promise(r => setTimeout(r, 400))
+        }
+        Toast.success(`已导出 ${names.length} 张${label}`)
+      } else {
+        // >5 张：后端打包 zip 下载
+        Toast.info(`正在打包 ${names.length} 张…`)
+        const { blob, filename } = await api.exportZip({
+          bucket: BUCKET_OUT, names, brand: br,
+          zip_name: `${label}_${names.length}张_${ts}`,
+        })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename || `${label}_${names.length}张_${ts}.zip`
+        document.body.appendChild(a); a.click()
+        setTimeout(() => { a.remove(); URL.revokeObjectURL(url) }, 800)
+        Toast.success(`已导出 ${names.length} 张${label}（zip 内已按序号命名）`)
+      }
+      setSelected(new Set())
+    } catch (e) {
+      Toast.error('导出失败：' + (e?.message || e))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const doDelete = async () => {
+    const names = items.filter(it => selected.has(it.name)).map(it => it.name)
+    if (!names.length) { setDelConfirm(false); return }
+    setDeleting(true)
+    try {
+      const results = await Promise.allSettled(
+        names.map(n => api.libraryDelete(BUCKET_OUT, n, { brand: brand || 'cloudsleepgarden' }))
+      )
+      const ok = results.filter(r => r.status === 'fulfilled' && r.value?.ok).length
+      const fail = results.length - ok
+      Toast.success(`已删除 ${ok} 张${label}${fail ? `（${fail} 张失败）` : ''}`)
+      setSelected(new Set())
+      setDelConfirm(false)
+      onRefresh && onRefresh()
+    } catch (e) {
+      Toast.error('删除失败：' + (e?.message || e))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <>
+      <Card variant="secondary" className="!shrink-0 !flex-row !flex-wrap !items-center !gap-3 !p-3">
+        <div style={{ flex: '1 1 auto' }} />
+        <Chip size="sm" variant="secondary" color="default">{items.length} 张{label}</Chip>
+        {selected.size > 0 && (
+          <>
+            <HeroButton variant="primary" size="sm" className="shrink-0" onPress={doExport} isDisabled={exporting}>
+              <Icon name="download" size={13} /> {exporting ? (selected.size > 5 ? '打包中…' : '导出中…') : `导出（${selected.size}）`}
+            </HeroButton>
+            <HeroButton variant="danger" size="sm" className="shrink-0" onPress={() => setDelConfirm(true)} isDisabled={deleting}>
+              <Icon name="delete" size={13} /> 删除（{selected.size}）
+            </HeroButton>
+            <HeroButton variant="ghost" size="sm" onPress={clearSel}>清空选中</HeroButton>
+          </>
+        )}
+      </Card>
+      <Card variant="secondary" className="min-h-0 flex-1 overflow-y-auto">
+        <SelectableGrid items={items} brand={brand} selected={selected} onToggle={toggle} onPreview={onPreview} emptyText={emptyText} emptyIcon={emptyIcon} />
+      </Card>
+      <Modal
+        title={`删除${label}`}
+        visible={delConfirm}
+        onCancel={() => !deleting && setDelConfirm(false)}
+        onOk={doDelete}
+        okText="确定删除"
+        okType="danger"
+        motion={false}
+        keepDOM={false}
+      >
+        <p>将永久删除选中的 <b>{selected.size}</b> 张{label}，删除后不可恢复。</p>
+      </Modal>
+    </>
+  )
+}
+
+// ---------- ResultsLibrary（图库：整合素材 + 合成结果 + 生成记录 + 套图） ----------
+function ResultsLibrary({ active = true, brand, buckets = {} }) {
+  const TAB_ALL = 'all'       // 全部（含所有非素材图）
+  const TAB_SYNTH = 'synth'   // 合成图（主图合成 gen_*）
+  const TAB_FRAME = 'frame'   // 分镜图（视频生成的 frame_*）
+  const TAB_TPL = 'tpl'       // 模版图
+  const TAB_SUITE = 'suite'   // 套图（套图生成页 suite_*）
+  const TAB_OTHER = 'other'   // 其他生成图（图片生成 img_*）
+  const TAB_MAINS = 'mains'   // 主图素材
+  const TAB_CATS = 'cats'     // 猫咪素材
+  const TAB_LOG = 'records'   // 生成记录
+  const [tab, setTab] = useState(TAB_ALL)
+
+  // ====== 合成图列表 ======
+  const [list, setList] = useState([])
+  const [preview, setPreview] = useState(null)
+  const [delConfirm, setDelConfirm] = useState(null)
+
+  // ====== 套图生成列表（从 synthesized 中筛选 suite_ 前缀）======
+  const [suiteList, setSuiteList] = useState([])
+  const [suiteLoading, setSuiteLoading] = useState(false)
+
+  const refreshSuiteImages = useCallback(() => {
+    setSuiteLoading(true)
+    // 用 api.images 而非原始 fetch：确保走 _withAccount 附加 account 参数 + 正确 baseUrl
+    api.images(BUCKET_OUT, { brand }).then(d => {
+      const items = (d.images || [])
+        .filter(n => /^suite_/i.test(n.name || ''))
+        .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))
+      setSuiteList(items)
+    }).catch(() => setSuiteList([])).finally(() => setSuiteLoading(false))
+  }, [brand])
+
+  const refreshImages = useCallback(() => {
+    // 后端 _bucket_dir 自带根级 fallback（output/<brand>/synthesized），直接走 api.images 即可
+    api.images(BUCKET_OUT, { brand })
+      .then(d => {
+        const items = (d.images || []).filter(it => !/^tpl_/i.test(it.name || ''))
+        setList(items)
+      })
+      .catch(() => setList([]))
+  }, [brand])
+
+  // ====== 生成记录 ======
+  const [batches, setBatches] = useState([])
+  const [recordSub, setRecordSub] = useState('active') // active / done
+  const [recordsPoll, setRecordsPoll] = useState(() => null)
+
+  const refreshBatches = useCallback(async () => {
+    try {
+      const r = await api.batchList({ brand })
+      setBatches(r.batches || [])
+    } catch {
+      setBatches([])
+    }
+  }, [brand])
+
+  // 挂载时：后台 5s 轮询 records（切到记录 Tab 时更频繁到 3s）
+  useEffect(() => {
+    refreshBatches()
+    let alive = true
+    let timer = null
+    const tick = () => {
+      if (!alive) return
+      refreshBatches().finally(() => {
+        timer = setTimeout(tick, tab === TAB_LOG ? 3000 : 5000)
+      })
+    }
+    timer = setTimeout(tick, tab === TAB_LOG ? 3000 : 5000)
+    setRecordsPoll(() => () => { alive = false; if (timer) clearTimeout(timer) })
+    return () => { alive = false; if (timer) clearTimeout(timer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, refreshBatches])
+  useEffect(() => () => { if (recordsPoll) try { recordsPoll() } catch {} }, [recordsPoll])
+
+  useEffect(() => { refreshImages() }, [refreshImages])
+  useEffect(() => { if (active) refreshImages() }, [active, refreshImages])
+  useEffect(() => { refreshSuiteImages() }, [refreshSuiteImages])
+  useEffect(() => { if (active) refreshSuiteImages() }, [active, refreshSuiteImages])
+  useEffect(() => {
+    const handler = () => { refreshImages(); refreshBatches(); refreshSuiteImages() }
+    window.addEventListener('tk:refresh-results', handler)
+    return () => window.removeEventListener('tk:refresh-results', handler)
+  }, [refreshImages, refreshBatches, refreshSuiteImages])
+
+  // 4 个 tab 的数据源（基于原始 list 按命名前缀分组，默认 mtime 降序；前端不展示排序控件）
+  const frameImages = useMemo(() => list.filter(it => /^frame_/i.test(it.name || ''))
+    .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)), [list])
+  const genImages = useMemo(() => list.filter(it => /^gen_/i.test(it.name || ''))
+    .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)), [list])
+  const otherImages = useMemo(() => list.filter(it => /^img_/i.test(it.name || ''))
+    .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)), [list])
+
+  // 各个 tab 的瀑布流布局统一由 SelectableGrid 内部计算（点击勾选 + 右上角删除/导出）
+
+  // 套图/合成图/分镜图/其他生成图/全部 的勾选、批量导出、批量删除统一由 LibSection 处理
+
+  // 记录分组：进行中 vs 已完成
+  const activeBatches = useMemo(
+    () => batches.filter(b => !{ success: 1, fail: 1, partial: 1 }[b.status]),
+    [batches],
+  )
+  const doneBatches = useMemo(
+    () => batches.filter(b => !!{ success: 1, fail: 1, partial: 1 }[b.status]),
+    [batches],
+  )
+
+  const downloadFile = (name) => {
+    const a = document.createElement('a')
+    a.href = api.imageUrl(BUCKET_OUT, name, { brand })
+    a.download = name
+    document.body.appendChild(a); a.click()
+    setTimeout(() => a.remove(), 500)
+  }
+
+  const deleteOne = async (name) => {
+    try {
+      await api.deleteImg(BUCKET_OUT, name, { brand })
+      Toast.success('已删除 ' + name)
+      setDelConfirm(null)
+      setPreview(p => (p && p.name === name ? null : p))
+      refreshImages()
+    } catch (e) { Toast.error(e.message) }
+  }
+
+  // 批量删除/导出已由 LibSection 内部处理，移除原批量处理逻辑
+
+  // 状态颜色
+  // 状态 → HeroUI Chip 语义色（品牌主题色只留给实心主按钮与高亮文案）
+  const BATCH_CHIP = {
+    queued:           { color: 'default', text: '排队中' },
+    running:          { color: 'warning', text: '合成中' },
+    pending_seedream: { color: 'default', text: '排队中' },
+    success:          { color: 'success', text: '全部成功' },
+    partial:          { color: 'warning', text: '部分完成' },
+    fail:             { color: 'danger',  text: '失败' },
+  }
+  const batchStatusMeta = (s) => BATCH_CHIP[s] || { color: 'default', text: s || '未知' }
+
+  // 每秒一个 tick，驱动「进行中」批次卡片的预估假进度条推进（不需要改 batches state，仅触发重渲染）
+  const [, setUiTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setUiTick(t => (t + 1) % 1000000), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // 生成记录的批量卡片渲染
+  const renderBatchCard = (b) => {
+    const meta = batchStatusMeta(b.status)
+    const okN = b.ok || 0
+    const failN = b.fail || 0
+    const doneN = okN + failN
+    const totalN = b.total || 0
+    const stopStates = { success: 1, fail: 1, partial: 1 }
+    const trueProg = Math.max(
+      b.progress || 0,
+      totalN ? Math.round((doneN / totalN) * 100) : 0
+    )
+    // ===== 消耗积分 =====
+    // - 实际：items 里所有 success 有 credits_used 的累加（真实消耗）
+    // - 预计：total * model_cost（进行中 / 失败都显示这个，方便用户预估成本）
+    const perCost = Math.max(1, Number(b.model_cost ?? 1) || 1)
+    const estimatedCredits = totalN * perCost
+    const actualCredits = (b.items || []).reduce(
+      (s, it) => s + (Number.isFinite(+it.credits_used) ? +it.credits_used : 0), 0
+    )
+    const usedCreditsFinite = actualCredits > 0
+    let useProg = trueProg
+    if (!stopStates[b.status]) {
+      // ====== 假进度：按创建以来时间差推进，99% 封顶；真实图片返回（终结态）才跳 100% ======
+      const cost = perCost
+      const secPerPair = cost >= 5 ? 150 : cost >= 3 ? 90 : 45
+      const totalSec = Math.max(secPerPair, totalN * secPerPair)
+      const createdMs = new Date(String(b.created_at || Date.now())).getTime()
+      const elapsedSec = Math.max(0, (Date.now() - createdMs) / 1000)
+      const estProg = Math.min(99, Math.round(100 * elapsedSec / totalSec))
+      useProg = Math.min(99, Math.max(trueProg, estProg))
+    } else {
+      // 终结状态：成功/失败/局部成功 → 直接显示 100%
+      useProg = Math.max(trueProg, 100)
+    }
+    const subTab = b.pair_strategy === 'random' ? '随机猫咪' : '按顺序'
+    return (
+      <Card key={b.batch_id} variant="secondary" className="shrink-0 gap-3">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip size="sm" variant="soft" color={meta.color}>{meta.text}</Chip>
+              <span className="text-sm font-bold text-(--foreground)">批次 {b.batch_id}</span>
+              <Chip size="sm" variant="secondary" color="default">共 {b.total} 对</Chip>
+              <Chip size="sm" variant="secondary" color="default">{subTab}策略</Chip>
+              {b.model && (
+                <Chip size="sm" variant="secondary" color="default">
+                  模型 {b.model.replace('NanoBanana/', '').replace('nano-banana/', '').slice(0, 14)}
+                </Chip>
+              )}
+              {b.width && b.height && (
+                <Chip size="sm" variant="secondary" color="default">{b.width}×{b.height}</Chip>
+              )}
+              {usedCreditsFinite && (
+                <Chip size="sm" variant="soft" color="warning"
+                  title="已完成的子任务实际消耗积分累加（与账户积分账单一致）">
+                  <Icon name="walletOne" size={11} /> 实际 {actualCredits} 积分
+                </Chip>
+              )}
+              {estimatedCredits > 0 && (
+                <Chip size="sm"
+                  variant={usedCreditsFinite ? 'secondary' : 'soft'}
+                  color={usedCreditsFinite ? 'default' : 'accent'}
+                  title="按所选模型单价 × 总对数估算（与「每对 N 积分」一致）">
+                  <Icon name="trend" size={11} /> 预计 {estimatedCredits} 积分
+                </Chip>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-3 text-xs text-(--muted)">
+              <span>创建：{b.created_at}</span>
+              {b.started_at && <span>开始：{b.started_at}</span>}
+              {b.finished_at && <span>结束：{b.finished_at}</span>}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-4">
+            <div className="min-w-[38px] text-center">
+              <div className="text-[15px] font-extrabold text-(--success)">{b.ok || 0}</div>
+              <div className="text-[11px] text-(--muted)">成功</div>
+            </div>
+            <div className="min-w-[38px] text-center">
+              <div className="text-[15px] font-extrabold text-(--foreground)">{b.pending || 0}</div>
+              <div className="text-[11px] text-(--muted)">待出图</div>
+            </div>
+            <div className="min-w-[38px] text-center">
+              <div className="text-[15px] font-extrabold text-(--danger)">{b.fail || 0}</div>
+              <div className="text-[11px] text-(--muted)">失败</div>
+            </div>
+          </div>
+        </div>
+
+        {/* 进度条 */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex justify-between text-xs text-(--muted)">
+            <span>进度 {useProg}%</span>
+            <span>{okN + failN} / {totalN}</span>
+          </div>
+          <ProgressBar.Root value={useProg} maxValue={100} className="w-full">
+            <ProgressBar.Track>
+              <ProgressBar.Fill />
+            </ProgressBar.Track>
+          </ProgressBar.Root>
+        </div>
+
+        {/* 条目（最多显示 6 个，折叠更多）*/}
+        <div className="flex flex-col gap-1.5">
+          {(b.items || []).slice(0, 6).map(it => {
+            const stMeta = batchStatusMeta(it.status)
+            return (
+              <Surface key={it.index} variant="tertiary"
+                className="flex items-center gap-2.5 rounded-(--radius-lg) border border-(--border) p-2.5">
+                <span className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-md bg-(--surface-secondary) text-[11px] font-extrabold text-(--muted)">
+                  {it.index}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-(--foreground)">
+                    <span className="inline-flex items-center gap-1"><Icon name="home" size={12} /> {it.main}</span>
+                    <span className="text-(--muted)">＋</span>
+                    <span className="inline-flex items-center gap-1"><Icon name="cat" size={12} /> {it.cat}</span>
+                  </div>
+                  {(it.output_name || it.error) && (
+                    <div className="mt-0.5 flex items-center gap-1 text-[11px]"
+                      style={{ color: it.error ? 'var(--danger)' : 'var(--muted)' }}>
+                      {it.error
+                        ? <><Icon name="close" size={11} /> {it.error.slice(0, 80)}</>
+                        : <><Icon name="check" size={11} /> 输出：{it.output_name}</>}
+                    </div>
+                  )}
+                </div>
+                <Chip size="sm" variant="soft" color={stMeta.color} className="shrink-0">{stMeta.text}</Chip>
+                {it.elapsed_sec > 0 && (
+                  <span className="shrink-0 text-[11px] text-(--muted)">{it.elapsed_sec.toFixed(1)}s</span>
+                )}
+                {Number.isFinite(+it.credits_used) && +it.credits_used >= 0 ? (
+                  <Chip size="sm" variant="soft" color="warning" className="shrink-0"
+                    title="本条合成实际扣减积分（与 NanoBanana 账单一致）">
+                    <Icon name="walletOne" size={11} /> {it.credits_used}
+                  </Chip>
+                ) : it.status === 'success' ? null : (
+                  <Chip size="sm" variant="secondary" color="default" className="shrink-0"
+                    title={`本条合成预估扣减积分（模型单价 ${perCost} / 对）`}>
+                    <Icon name="trend" size={11} /> ~{perCost}
+                  </Chip>
+                )}
+                {it.output_name && (
+                  <HeroButton size="sm" variant="secondary" className="shrink-0"
+                    onPress={() => setPreview({ name: it.output_name, size: 0, mtime: Date.now() })}>
+                    <Icon name="view" size={12} /> 预览
+                  </HeroButton>
+                )}
+              </Surface>
+            )
+          })}
+          {(b.items || []).length > 6 && (
+            <span className="pl-2 text-xs text-(--muted)">…还有 {(b.items || []).length - 6} 条子任务</span>
+          )}
+        </div>
+      </Card>
+    )
+  }
+
+  const recordList = recordSub === 'active' ? activeBatches : doneBatches
+
+  const LIB_TABS = [
+    { k: TAB_ALL,   label: '全部' },
+    { k: TAB_SYNTH, label: '合成图' },
+    { k: TAB_FRAME, label: '分镜图' },
+    { k: TAB_TPL,   label: '模版图' },
+    { k: TAB_SUITE, label: '套图' },
+    { k: TAB_OTHER, label: '其他生成图' },
+    { k: TAB_MAINS, label: '主图素材' },
+    { k: TAB_CATS,  label: '猫咪素材' },
+    { k: TAB_LOG,   label: '生成记录' },
+  ]
+
+  return (
+    <div className="tk-page hero-page">
+      <Tabs.Root
+        selectedKey={tab}
+        onSelectionChange={(k) => setTab(String(k))}
+        className="flex min-h-0 flex-1 flex-col gap-4"
+      >
+        {/* 顶部：图库 Tab（素材 + 合成结果 + 生成记录） */}
+        <Card variant="secondary" className="!shrink-0 !flex-row !flex-nowrap !items-center !gap-2 !p-2">
+          <Tabs.ListContainer className="min-w-0 flex-1">
+            <Tabs.List className="flex-nowrap overflow-x-auto">
+              {LIB_TABS.map(t => (
+                <Tabs.Tab key={t.k} id={t.k} className="gap-1.5">
+                  <span>{t.label}</span>
+                  {/* 选中态指示器必须放在每个 Tabs.Tab 内部（官方 anatomy）。
+                      .tabs__tab[data-selected] 只改文字颜色，视觉高亮全靠它。
+                      默认底色是 --segment（暗色下≈白药丸=白底白字看不清），
+                      改为微升起的中性面版色，保持对比度。 */}
+                  <Tabs.Indicator className="rounded-xl bg-(--surface-bg-2) shadow-none" />
+                </Tabs.Tab>
+              ))}
+            </Tabs.List>
+          </Tabs.ListContainer>
+          {(tab !== TAB_MAINS && tab !== TAB_CATS && tab !== TAB_TPL) && (
+            <HeroButton
+              variant="secondary"
+              size="sm"
+              className="shrink-0"
+              onPress={() => {
+                if (tab === TAB_LOG) refreshBatches()
+                else if (tab === TAB_SUITE) refreshSuiteImages()
+                else refreshImages() // TAB_ALL / TAB_FRAME / TAB_OTHER
+              }}
+            >
+              <Icon name="refresh" size={13} /> 刷新
+            </HeroButton>
+          )}
+        </Card>
+
+        {/* 模版图 */}
+        <Tabs.Panel id={TAB_TPL} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <TemplateResultLibrary brand={brand} />
+        </Tabs.Panel>
+
+        {/* 全部 */}
+                <Tabs.Panel id={TAB_ALL} className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+          <LibSection items={list} brand={brand} label="图片" emptyIcon="magic"
+            emptyText="还没有合成图，到「生图工作台」点 一键合成吧！"
+            onPreview={setPreview} onRefresh={refreshImages} />
+        </Tabs.Panel>
+
+        {/* 合成图（gen_* 主图合成产出） */}
+                <Tabs.Panel id={TAB_SYNTH} className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+          <LibSection items={genImages} brand={brand} label="合成图" emptyIcon="magic"
+            emptyText="还没有「合成图」，到「主图合成」工作台跑一张吧！"
+            onPreview={setPreview} onRefresh={refreshImages} />
+        </Tabs.Panel>
+
+        {/* 套图（suite_* 套图生成页产出） */}
+                <Tabs.Panel id={TAB_SUITE} className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+          <LibSection items={suiteList} brand={brand} label="套图" emptyIcon="layoutGrid"
+            emptyText="还没有套图结果，到「套图生成」页开始创建吧！"
+            onPreview={setPreview} onRefresh={refreshSuiteImages} />
+        </Tabs.Panel>
+
+        {/* 素材库 */}
+        <Tabs.Panel id={TAB_MAINS} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <LibraryGallery brand={brand} />
+        </Tabs.Panel>
+        <Tabs.Panel id={TAB_CATS} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <CatsGallery brand={brand} />
+        </Tabs.Panel>
+
+        {/* 其他生成图（img_* 图片生成功能产出） */}
+                <Tabs.Panel id={TAB_OTHER} className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+          <LibSection items={otherImages} brand={brand} label="其他生成图" emptyIcon="magic"
+            emptyText="还没有「其他生成图」，到「图片生成」页跑一张吧！"
+            onPreview={setPreview} onRefresh={refreshImages} />
+        </Tabs.Panel>
+
+        {/* 分镜图（frame_* 视频生成的 frame） */}
+                <Tabs.Panel id={TAB_FRAME} className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+          <LibSection items={frameImages} brand={brand} label="分镜图" emptyIcon="film"
+            emptyText="还没有「分镜图」，到「生成视频」提交任务后回来看看。"
+            onPreview={setPreview} onRefresh={refreshImages} />
+        </Tabs.Panel>
+
+        {/* 生成记录 */}
+        <Tabs.Panel id={TAB_LOG} className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+          <Card variant="secondary" className="!shrink-0 !flex-row !flex-nowrap !items-center !justify-between !gap-3 !p-3">
+            <div className="flex gap-1">
+              {[
+                { k: 'active', label: '进行中', count: activeBatches.length },
+                { k: 'done',   label: '已完成', count: doneBatches.length },
+              ].map(s => {
+                const active = recordSub === s.k
+                return (
+                  <HeroButton key={s.k} size="sm" variant={active ? 'secondary' : 'ghost'}
+                    className="gap-1.5" onPress={() => setRecordSub(s.k)}>
+                    <span>{s.label}</span>
+                    <Chip size="sm" variant="secondary" color="default">{s.count}</Chip>
+                  </HeroButton>
+                )
+              })}
+            </div>
+            <Chip size="sm" variant="secondary" color="default">共 {batches.length} 条批次记录</Chip>
+          </Card>
+
+          <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+            {recordList.length === 0 ? (
+              <EmptyState className="rounded-(--radius-xl) border border-dashed border-(--border) py-10">
+                <Icon name="fileText" size={22} />
+                <p className="mt-2 text-center text-xs text-(--muted)">
+                  {recordSub === 'active' ? '当前没有进行中的生成任务' : '还没有完成记录，开始你的第一次批量合成吧～'}
+                </p>
+              </EmptyState>
+            ) : (
+              <div className="flex flex-col gap-3 pb-3.5">
+                {recordList.map(renderBatchCard)}
+              </div>
+            )}
+          </div>
+        </Tabs.Panel>
+      </Tabs.Root>
+
+      {/* 套图批量删除确认弹窗：已由 LibSection 内部处理，移除原独立弹窗 */}
+      {/* 预览弹窗 */}
+      <Modal
+        title="合成结果预览"
+        visible={!!preview}
+        onCancel={() => setPreview(null)}
+        motion={false}
+        keepDOM={false}
+        width={720}
+        footer={
+          <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+            <button className="preview-btn preview-btn-ghost" onClick={() => preview && downloadFile(preview.name)}>
+              <Icon name="download" size={13} /> 下载
+            </button>
+            <button className="preview-btn preview-btn-danger" onClick={() => preview && setDelConfirm(preview)}>
+              <Icon name="delete" size={13} /> 删除
+            </button>
+            <button className="preview-btn preview-btn-solid" onClick={() => setPreview(null)}>关闭</button>
+          </div>
+        }
+      >
+        {preview && (
+          <div style={{
+            width: 'fit-content', maxWidth: '100%', maxHeight: '70vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            overflow: 'hidden', borderRadius: 14, border: '1px solid var(--border)',
+            background: 'var(--surface-tertiary)', margin: '0 auto',
+          }}>
+            <img
+              src={api.imageUrl(BUCKET_OUT, preview.name, { brand })}
+              alt=""
+              style={{ maxWidth: '100%', maxHeight: 'calc(70vh - 2px)', objectFit: 'contain', display: 'block' }}
+            />
+          </div>
+        )}
+      </Modal>
+
+      {/* 删除确认 */}
+      <Modal
+        title="确认删除"
+        visible={!!delConfirm}
+        onCancel={() => setDelConfirm(null)}
+        onOk={() => delConfirm && deleteOne(delConfirm.name)}
+        okText="删除"
+        okType="danger"
+        motion={false}
+        keepDOM={false}
+      >
+        <p>将删除合成结果 <b>{delConfirm?.name}</b>，删除后不可恢复。</p>
+      </Modal>
+
+      {/* 批量删除确认：已由 LibSection 内部处理，移除原独立弹窗 */}
+    </div>
+  )
+}
+
+// ---------- LibraryGallery（主图素材库页面，严格对齐主页 library-grid 风格）----------
+function LibraryGallery({ brand }) {
+  const BUCKET = BUCKET_MAIN
+  const fileRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [list, setList] = useState([])
+  const [kw, setKw] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [delConfirm, setDelConfirm] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    try {
+      const d = await api.libraryList(BUCKET, { brand })
+      setList(d.items || [])
+    } catch {
+      setList([])
+    } finally {
+      setLoading(false)
+    }
+  }, [brand, BUCKET])
+
+  useEffect(() => { refresh() }, [refresh, brand])
+
+  const deleteOne = async (name) => {
+    try {
+      await api.libraryDelete(BUCKET, name, { brand })
+      Toast.success('已删除 ' + name)
+      setDelConfirm(null)
+      setPreview(p => (p && p.name === name ? null : p))
+      refresh()
+    } catch (e) { Toast.error(e.message) }
+  }
+
+  const filtered = list.filter(it => {
+    if (!kw) return true
+    return (it.name || '').toLowerCase().includes(String(kw).toLowerCase())
+  })
+
+  const totalSize = list.reduce((s, it) => s + (it.size || 0), 0)
+
+  return (
+    <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+      <div className="tk-panel" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 280px', minWidth: 240 }}>
+            <Input
+              value={kw}
+              onChange={(v) => setKw(v)}
+              placeholder="搜索主图素材名称…"
+              showClear
+              prefix={<Icon name="search" size={14} style={{ color: 'var(--text-muted)' }} />}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="tk-chip">共 {list.length} 张素材</span>
+            {list.length > 0 && <span className="tk-chip">{fmtSize(totalSize)}</span>}
+            {kw && <Tag color="cyan" size="small">匹配 {filtered.length}</Tag>}
+            <Button theme="light" onClick={refresh} loading={loading}>⟳ 刷新</Button>
+          </div>
+        </div>
+        <SimpleDropzone
+          bucket={BUCKET}
+          fileInputRef={fileRef}
+          onUploaded={refresh}
+          busy={busy}
+          setBusy={setBusy}
+          brand={brand}
+        />
+      </div>
+
+      <div className="tk-panel" style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
+        {loading ? (
+          <div className="tk-empty">
+            <Spinner size="md" />
+            <div style={{ marginTop: 10 }}>加载素材中…</div>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="tk-empty">
+            <span className="emoji">{kw ? <Icon name="search" size={20} /> : <Icon name="inbox" size={20} />}</span>
+            {kw ? `没有匹配「${kw}」的素材` : '主图素材库为空，上传或通过 1688 链接导入图片吧～'}
+          </div>
+        ) : (
+          <div className="library-grid" style={{ padding: '4px 14px 18px' }}>
+            {filtered.map(it => (
+              <div key={it.name} className="library-card">
+                <div className="thumb" onClick={() => setPreview(it)} style={{ cursor: 'zoom-in' }}>
+                  <SmartImg bucket={BUCKET} name={it.name} alt={it.name} loading="lazy" brand={brand} />
+                </div>
+                <div className="meta">
+                  <div className="sub">
+                    <span>{it.mtimeText?.slice(0, 10) || ''}</span>
+                    <span style={{ display: 'flex', gap: 4 }}>
+                      <Tooltip content="预览大图">
+                        <Button size="small" theme="light" onClick={() => setPreview(it)}><Icon name="view" size={12} /></Button>
+                      </Tooltip>
+                      <Tooltip content="删除素材">
+                        <Button size="small" theme="light" type="danger" onClick={() => setDelConfirm(it)}><Icon name="delete" size={12} /></Button>
+                      </Tooltip>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Modal
+        title="主图素材预览"
+        visible={!!preview}
+        onCancel={() => setPreview(null)}
+        motion={false}
+        keepDOM={false}
+        width={820}
+        footer={
+          <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+            <button
+              className="preview-btn preview-btn-ghost"
+              onClick={() => {
+                if (!preview) return
+                const a = document.createElement('a')
+                a.href = api.imageUrl(BUCKET, preview.name, { brand })
+                a.download = preview.name
+                document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 500)
+              }}
+            >
+              <Icon name="download" size={13} /> 下载
+            </button>
+            <button className="preview-btn preview-btn-danger" onClick={() => preview && setDelConfirm(preview)}>
+              <Icon name="delete" size={13} /> 删除
+            </button>
+            <button className="preview-btn preview-btn-solid" onClick={() => setPreview(null)}>关闭</button>
+          </div>
+        }
+      >
+        {preview && (
+          <div style={{ width: 'fit-content', maxWidth: '100%', maxHeight: '70vh', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface-tertiary)', margin: '0 auto' }}>
+            <img
+              src={api.imageUrl(BUCKET, preview.name, { brand })}
+              alt=""
+              style={{ maxWidth: '100%', maxHeight: 'calc(70vh - 2px)', objectFit: 'contain', display: 'block' }}
+            />
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        title="确认删除"
+        visible={!!delConfirm}
+        onCancel={() => setDelConfirm(null)}
+        onOk={() => delConfirm && deleteOne(delConfirm.name)}
+        okType="danger"
+        okText="删除"
+        motion={false}
+        keepDOM={false}
+      >
+        <p>你将删除主图素材 <b>{delConfirm?.name}</b>，删除后无法恢复。</p>
+      </Modal>
+    </div>
+  )
+}
+
+// ---------- Import1688Page（1688 链接导入：解析 → 展示 → 选择入库）----------
+function Import1688Page({ brand, onSwitchTab }) {
+  const [url, setUrl] = useState('')
+  const [parsing, setParsing] = useState(false)
+  const [results, setResults] = useState([]) // 批量返回：[{url, ok, error, product_id, title, images:[{index,url,thumb_url,local_url,tmp_cache_name}],...}]
+  const [saving, setSaving] = useState({}) // uid -> bool
+  const [savedSet, setSavedSet] = useState(() => new Set())
+  // 批量勾选：key = `${pid}_${idx}` 或 `${url}_${idx}`
+  const [selected, setSelected] = useState(() => new Set())
+  const [batchSaving, setBatchSaving] = useState(false)
+  const [warming, setWarming] = useState(false) // 浏览器预热过码中
+  const [loggingIn, setLoggingIn] = useState(false) // 打开 1688 登录页中
+  const [reParsing, setReParsing] = useState({}) // pIdx -> bool（单条重新读取中）
+
+  // 为每张图生成稳定 uid（跨 results 全局）
+  const imgUid = (product, img) => `${product?.product_id || product?.url || '_'}_${img.index}_${(img.tmp_cache_name || img.url || '').slice(-8)}`
+
+  const splitUrls = (raw) => {
+    return String(raw || '')
+      .split(/[\r\n,，;；\s]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+  }
+
+  const handleParse = async () => {
+    const raw = splitUrls(url)
+    if (!raw.length) { Toast.warning('请输入至少一条 1688 商品链接'); return }
+    const invalid = raw.filter(u => !/1688\.com|alibaba\.com/i.test(u))
+    if (invalid.length === raw.length) { Toast.warning('请输入有效的 1688 或阿里巴巴商品链接'); return }
+    const urls = invalid.length > 0 ? raw.filter(u => /1688\.com|alibaba\.com/i.test(u)) : raw
+    setParsing(true); setResults([]); setSelected(new Set()); setSavedSet(new Set()); setSaving({})
+    try {
+      let r
+      if (urls.length === 1) {
+        const one = await api.parse1688(urls[0], brand)
+        r = {
+          total: 1, ok_count: one?.images?.length ? 1 : 0, fail_count: one?.images?.length ? 0 : 1,
+          results: [{ ok: !!one?.images?.length, url: urls[0], error: one?.images?.length ? '' : '未解析到任何主图', ...one, brand }],
+        }
+      } else {
+        r = await api.parse1688Batch(urls, brand, 5)
+      }
+      const list = r?.results || []
+      setResults(list)
+      const imgTotal = list.reduce((n, p) => n + (p?.images?.length || 0), 0)
+      const ok = list.filter(p => p?.ok).length
+      const fail = list.filter(p => !p?.ok).length
+      if (fail === 0) {
+        Toast.success(`解析完成：成功 ${ok} 个商品，共 ${imgTotal} 张主图（每个商品前 5 张）`)
+      } else {
+        Toast.warning(`解析完成：成功 ${ok}，失败 ${fail}，共 ${imgTotal} 张主图（失败商品请单独重试）`)
+      }
+    } catch (e) {
+      Toast.error('解析失败: ' + e.message)
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  // 单条记录「重新读取」：针对批量里失败 / 被跳过的商品，单独重新解析。
+  // 走 /api/1688/parse 单条接口（内置浏览器兜底，若 cookie 已过期会自动弹 Chrome 让你过风控）。
+  const handleReParse = async (pIdx) => {
+    const prod = results[pIdx]
+    const u = prod?.url
+    if (!u) { Toast.warning('该记录没有可重试的链接'); return }
+    setReParsing(prev => ({ ...prev, [pIdx]: true }))
+    try {
+      const one = await api.parse1688(u, brand)
+      const ok = !!one?.images?.length
+      const refreshed = {
+        ok,
+        url: u,
+        error: ok ? '' : (one?.warning || '未解析到任何主图'),
+        ...one,
+        brand,
+      }
+      setResults(prev => prev.map((p, i) => (i === pIdx ? refreshed : p)))
+      // 若这次拿到新主图，清空旧的勾选/已保存状态里该记录的部分，避免错位
+      if (ok) {
+        setSelected(prev => {
+          const next = new Set()
+          for (const k of prev) if (!String(k).startsWith(`${prod?.product_id || u}_`)) next.add(k)
+          return next
+        })
+      }
+      if (ok) Toast.success(`已重新读取：${one.images.length} 张主图`)
+      else Toast.warning('重新读取仍无主图（可能被风控拦截，请稍后或先点「预热过码」再试）')
+    } catch (e) {
+      Toast.error('重新读取失败: ' + e.message)
+    } finally {
+      setReParsing(prev => ({ ...prev, [pIdx]: false }))
+    }
+  }
+
+  const handleWarmup = async () => {
+    const raw = splitUrls(url)
+    const firstUrl = raw.find(u => /1688\.com|alibaba\.com/i.test(u)) || ''
+    setWarming(true)
+    try {
+      Toast.info('正在启动常驻浏览器并打开 1688 登录页，请在弹出的 Chrome 窗口中登录一次…')
+      const r = await api.warmup1688(firstUrl)
+      if (r?.ok) Toast.success(r?.message || '已打开登录页')
+      else Toast.error(r?.message || '预热失败')
+    } catch (e) {
+      Toast.error('预热失败: ' + e.message)
+    } finally {
+      setWarming(false)
+    }
+  }
+
+  // 打开 1688 登录页：登录一次后，常驻浏览器会话复用，之后解析免重复验证
+  const handleLogin1688 = async () => {
+    setLoggingIn(true)
+    try {
+      Toast.info('正在打开 1688 登录页，请在弹出的 Chrome 窗口中登录一次…')
+      const r = await api.login1688()
+      if (r?.ok) Toast.success(r?.message || '已打开登录页，登录完成后即可批量解析')
+      else Toast.error(r?.message || '打开登录页失败')
+    } catch (e) {
+      Toast.error('打开登录页失败: ' + e.message)
+    } finally {
+      setLoggingIn(false)
+    }
+  }
+
+  const toggleSelect = (product, img) => {
+    const uid = imgUid(product, img)
+    setSelected(prev => {
+      const n = new Set(prev)
+      if (n.has(uid)) n.delete(uid); else n.add(uid)
+      return n
+    })
+  }
+  const toggleSelectProduct = (product) => {
+    const imgs = product?.images || []
+    if (!imgs.length) return
+    const uids = imgs.map(i => imgUid(product, i))
+    const allOn = uids.every(u => selected.has(u))
+    setSelected(prev => {
+      const n = new Set(prev)
+      if (allOn) uids.forEach(u => n.delete(u)); else uids.forEach(u => n.add(u))
+      return n
+    })
+  }
+  const clearSelection = () => setSelected(new Set())
+  const selectAllAcross = () => {
+    const all = new Set()
+    for (const p of results || []) for (const img of p?.images || []) all.add(imgUid(p, img))
+    setSelected(all)
+  }
+
+  const handleSaveOne = async (product, img) => {
+    if (!img) return
+    const uid = imgUid(product, img)
+    try {
+      setSaving(prev => ({ ...prev, [uid]: true }))
+      const r = await api.save1688({
+        product_id: product?.product_id,
+        url: img.url,
+        tmp_cache_name: img.tmp_cache_name,
+        index: img.index,
+        brand,
+      })
+      setSavedSet(prev => { const n = new Set(prev); n.add(uid); return n })
+      Toast.success((r?.saved_name ? `已加入主图素材库：${r.saved_name}` : '已加入主图素材库'))
+    } catch (e) {
+      Toast.error('保存失败: ' + e.message)
+    } finally {
+      setSaving(prev => ({ ...prev, [uid]: false }))
+    }
+  }
+
+  const handleSaveBatch = async () => {
+    if (!selected.size) { Toast.warning('请先勾选要加入素材库的图片'); return }
+    // 从 results 里挑出被选中的条目，组装 items[{product_id, url, tmp_cache_name, index}]
+    const items = []
+    for (const p of results || []) {
+      for (const img of p?.images || []) {
+        const uid = imgUid(p, img)
+        if (selected.has(uid)) {
+          items.push({
+            product_id: p?.product_id,
+            url: img.url,
+            tmp_cache_name: img.tmp_cache_name,
+            index: img.index,
+          })
+        }
+      }
+    }
+    if (!items.length) { Toast.warning('没有选中可保存的图片'); return }
+    setBatchSaving(true)
+    try {
+      const r = await api.save1688Batch(items, brand)
+      const saved_count = r?.saved_count || 0
+      const fail_count = r?.fail_count || 0
+      setSavedSet(prev => {
+        const n = new Set(prev)
+        for (const s of r?.saved || []) {
+          // 在 selected 中按 index+product_id 反查 uid 标记为已保存
+          const matchP = (results || []).find(p => p?.product_id && (s?.info?.name || '').includes(p.product_id))
+          const uid = (matchP?.images || []).find(i => i.index === s.index) ? imgUid(matchP, (matchP.images || []).find(i => i.index === s.index)) : null
+          if (uid) n.add(uid)
+        }
+        return n
+      })
+      // 更稳妥：从 selected 中对应 items 标记已保存
+      setSavedSet(prev => {
+        const n = new Set(prev)
+        for (const p of results || []) for (const img of p?.images || []) {
+          const uid = imgUid(p, img)
+          if (selected.has(uid)) n.add(uid)
+        }
+        return n
+      })
+      if (fail_count === 0) Toast.success(`批量加入完成：成功 ${saved_count} 张`)
+      else Toast.warning(`批量加入：成功 ${saved_count} 张，失败 ${fail_count} 张（失败项请重试或查看错误）`)
+      // 清掉已成功保存的选择项
+      setSelected(new Set())
+    } catch (e) {
+      Toast.error('批量加入失败: ' + e.message)
+    } finally {
+      setBatchSaving(false)
+    }
+  }
+
+  const handleSaveAll = async () => {
+    if (!results?.length) return
+    Toast.info('开始批量加入全部商品主图…')
+    let ok = 0, fail = 0
+    for (const p of results || []) {
+      if (!p?.ok) continue
+      for (const img of p.images) {
+        const uid = imgUid(p, img)
+        if (savedSet.has(uid)) { ok++; continue }
+        try {
+          setSaving(prev => ({ ...prev, [uid]: true }))
+          await api.save1688({
+            product_id: p?.product_id,
+            url: img.url,
+            tmp_cache_name: img.tmp_cache_name,
+            index: img.index,
+            brand,
+          })
+          setSavedSet(prev => { const n = new Set(prev); n.add(uid); return n })
+          ok++
+        } catch { fail++ } finally {
+          setSaving(prev => ({ ...prev, [uid]: false }))
+        }
+      }
+    }
+    Toast.success(`批量加入完成：成功 ${ok}${fail ? '，失败 ' + fail : ''}`)
+  }
+
+  const displayUrl = results.length ? results[0]?.url : null
+  const selectedCount = selected.size
+  const anySelected = selectedCount > 0
+
+  // 汇总：所有商品共多少图，已保存多少
+  const allImages = (results || []).flatMap(p => (p?.images || []).map(i => ({ p, i })))
+  const savedCount = allImages.filter(({ p, i }) => savedSet.has(imgUid(p, i))).length
+  const totalImages = allImages.length
+
+  return (
+    <div className="tk-page">
+      {/* 顶部 sticky 批量操作条：勾选后才出现 */}
+      {anySelected && (
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 20,
+          padding: '10px 16px', borderRadius: 14,
+          background: 'var(--surface-bg-2)',
+          border: '1px solid var(--border-strong)',
+          display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between',
+          backdropFilter: 'saturate(180%) blur(8px)',
+        }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Tag size="medium" color="blue">已选 {selectedCount} 张</Tag>
+            <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
+              勾选图右上角的复选框可多选；批量加入会一次性进入当前品牌的主图素材库
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button size="medium" theme="light" onClick={clearSelection}>取消选择</Button>
+            <Button size="medium" theme="solid" loading={batchSaving} disabled={batchSaving}
+              onClick={handleSaveBatch}>
+              批量加入素材库（{selectedCount} 张）
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="tk-panel" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'baseline', flexWrap: 'wrap', justifyContent: 'center', textAlign: 'center' }}>
+          <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--foreground)' }}>1688 商品主图导入</span>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--muted-foreground)', textAlign: 'center', maxWidth: 600, lineHeight: 1.7 }}>
+          支持一次粘贴 <b>多条</b> 1688 商品链接（每行一条，或逗号/空格分隔）；每条链接只解析前 5 张主图；未保存的预览图 12h 后自动清理
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap', justifyContent: 'center', width: '100%' }}>
+          <div style={{ flex: '1 1 520px', minWidth: 320 }}>
+            <TextArea
+              value={url}
+              onChange={(v) => setUrl(v)}
+              rows={4}
+              autosize={false}
+              placeholder={'粘贴多条 1688 商品链接（每行一条或逗号分隔），例如：\nhttps://detail.1688.com/offer/1043294036167.html\nhttps://detail.1688.com/offer/另一个ID.html'}
+              showClear
+            />
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted-foreground)', textAlign: 'center' }}>
+              当前已填写 <b style={{ color: 'var(--foreground)' }}>{splitUrls(url).length}</b> 条链接（会自动跳过明显不是 1688/阿里巴巴的内容）
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 140 }}>
+            <Button theme="solid" size="medium" loading={parsing} onClick={handleParse} style={{ height: 44 }}>
+              {parsing ? '解析中…' : '解析主图'}
+            </Button>
+            <Button theme="light" size="medium" loading={loggingIn} disabled={loggingIn} onClick={handleLogin1688} title="在常驻 Chrome 中登录 1688 一次，之后批量解析复用同一浏览器会话、免去每条重复验证" style={{ height: 38 }}>
+              {loggingIn ? '打开登录页中…' : '登录1688（免重复验证）'}
+            </Button>
+            {totalImages > 0 && (
+              <>
+                <Button theme="light" onClick={selectAllAcross}>全选所有商品 ({totalImages})</Button>
+                <Button theme="light" onClick={handleSaveAll} disabled={totalImages === savedCount} loading={Object.values(saving).some(Boolean)}>
+                  全部加入素材库
+                </Button>
+                {onSwitchTab && (
+                  <Button theme="light" onClick={() => onSwitchTab('library')}>前往素材库 <Icon name="right" size={11} /></Button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        {totalImages > 0 && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+            {results?.length === 1 && results[0]?.product_id && (
+              <Tag size="small">商品 ID：{results[0].product_id}</Tag>
+            )}
+            {results?.length > 1 && (
+              <Tag size="small">已解析 {results.filter(r => r?.ok).length}/{results.length} 个商品</Tag>
+            )}
+            {results?.length === 1 && results[0]?.title && (
+              <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>{results[0].title}</span>
+            )}
+            <span className="tk-chip">已保存 {savedCount}/{totalImages}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="tk-panel" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+        {parsing ? (
+          <div className="tk-empty">
+            <Spinner size="md" />
+            <div style={{ marginTop: 10 }}>正在解析商品主图（{splitUrls(url).length > 1 ? `共 ${splitUrls(url).length} 个链接，逐条解析，请稍候…` : '请稍候…'}）</div>
+          </div>
+        ) : !results?.length ? (
+          <div className="tk-empty" style={{ textAlign: 'center' }}>
+            <Icon name="link" size={20} />
+            <div style={{ marginTop: 6 }}>粘贴 1688 商品链接并点击「解析主图」</div>
+            <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginTop: 8, maxWidth: 560, lineHeight: 1.8, margin: '8px auto 0', display: 'inline-block', textAlign: 'left' }}>
+              <div>• 支持一次粘贴 <b>多条链接</b>（每行一条，或用逗号 / 空格分隔）</div>
+              <div>• 每个商品只展示 <b>前 5 张</b> 主图（如需更多可在源码调整 limit_per_product）</div>
+              <div>• 预览图先缓存到本地，未加入素材库的会在 <b>12 小时后自动清理</b>，不占用长期空间</div>
+              <div>• 支持单个链接：detail.1688.com / m.1688.com / offer/xxx.html 等页面</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ padding: '4px 14px 18px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {(results || []).map((prod, pIdx) => {
+              const imgs = prod?.images || []
+              const totalImgs = imgs.length
+              const prodAllSaved = imgs.every(i => savedSet.has(imgUid(prod, i)))
+              const prodSelectedCount = imgs.filter(i => selected.has(imgUid(prod, i))).length
+              const prodAllSelected = totalImgs > 0 && prodSelectedCount === totalImgs
+              return (
+                <section key={`${prod.product_id || prod.url || 'p'}_${pIdx}`}
+                  style={{ borderRadius: 16, padding: '12px 12px 4px', border: '1px solid var(--border-subtle)', background: 'var(--panel-surface-alt, #fff)' }}>
+                  <header style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', padding: '2px 6px 10px', borderBottom: totalImgs ? '1px dashed var(--border-subtle)' : 'none' }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {prod?.ok ? (
+                        <Tag size="small" color="green">解析成功</Tag>
+                      ) : (
+                        <Tag size="small" color="red">解析失败</Tag>
+                      )}
+                      {prod?.product_id && <Tag size="small">商品 ID：{prod.product_id}</Tag>}
+                      {prod?.title && <span style={{ fontSize: 13, color: 'var(--foreground)', fontWeight: 600, maxWidth: 760, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{prod.title}</span>}
+                      {prod?.url && (
+                        <a href={prod.url} target="_blank" rel="noreferrer"
+                          style={{ fontSize: 12, color: 'var(--muted-foreground)' }}
+                          onClick={e => { e.preventDefault(); window.open(prod.url, '_blank', 'noreferrer') }}>
+                          原始商品页 <Icon name="send" size={11} />
+                        </a>
+                      )}
+                      {prod?.error && (
+                        <span style={{ fontSize: 12, color: 'var(--danger, #e34d59)' }}>{prod.error}</span>
+                      )}
+                      <Button size="small" theme="light"
+                        loading={!!reParsing[pIdx]}
+                        onClick={() => handleReParse(pIdx)}
+                        style={{ height: 26, padding: '0 10px', marginLeft: 2 }}>
+                        <Icon name="refresh" size={12} /> 重新读取
+                      </Button>
+                    </div>
+                    {totalImgs > 0 && (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <Checkbox checked={prodAllSelected}
+                          onChange={(e) => { e?.stopPropagation && e.stopPropagation(); toggleSelectProduct(prod); }}>
+                          {prodSelectedCount > 0 ? `本商品已选 ${prodSelectedCount}/${totalImgs}` : `全选本商品 (${totalImgs})`}
+                        </Checkbox>
+                        {prodAllSaved && <Tag size="small" color="green">本商品已全部入库</Tag>}
+                      </div>
+                    )}
+                  </header>
+
+                  {totalImgs ? (
+                    <div className="library-grid" style={{ padding: '10px 4px 14px' }}>
+                      {imgs.map(img => {
+                        const uid = imgUid(prod, img)
+                        const isSaved = savedSet.has(uid)
+                        const isSaving = !!saving[uid]
+                        const isOn = selected.has(uid)
+                        const previewSrc = img.local_url || img.thumb_url || img.url
+                        return (
+                          <div key={uid} className="library-card" title={`主图 ${img.index}`}
+                            style={{ position: 'relative' }}>
+                            {/* 右上角大号勾选热区（48×48，点击整张图右上角区域即可勾选） */}
+                            <button
+                              type="button"
+                              aria-label={isOn ? '取消选中' : '勾选'}
+                              onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleSelect(prod, img); }}
+                              style={{
+                                position: 'absolute', top: 4, right: 4, zIndex: 3,
+                                width: 48, height: 48,
+                                display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end',
+                                padding: '8px 10px 0 0',
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                borderRadius: 12,
+                              }}
+                            >
+                              <span style={{
+                                width: 22, height: 22,
+                                borderRadius: 8,
+                                border: isOn ? '2px solid var(--foreground)' : '2px solid rgba(0,0,0,0.18)',
+                                background: isOn ? 'var(--foreground)' : 'rgba(255,255,255,0.92)',
+                                boxShadow: isOn
+                                  ? '0 4px 14px color-mix(in srgb, var(--foreground) 30%, transparent), 0 1px 2px rgba(0,0,0,0.08)'
+                                  : '0 2px 6px rgba(0,0,0,0.12)',
+                                color: 'var(--background)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontWeight: 900, fontSize: 14, lineHeight: 1,
+                                transition: 'all .15s ease',
+                              }}>
+                                {isOn ? <Icon name="check" size={11} /> : ''}
+                              </span>
+                            </button>
+                            <div className="thumb" style={{ cursor: 'zoom-in' }}
+                              onClick={() => window.open(img.url, '_blank', 'noreferrer')}>
+                              <img src={previewSrc} alt={`主图 ${img.index}`} loading="lazy"
+                                onError={(e) => {
+                                  const cur = e.currentTarget
+                                  if (cur.src !== (img.local_url || img.url)) {
+                                    cur.src = img.local_url || img.url
+                                  } else if (cur.src !== img.url) {
+                                    cur.src = img.url
+                                  }
+                                }}
+                                style={{ filter: isOn ? 'drop-shadow(0 0 0 4px color-mix(in srgb, var(--foreground) 45%, transparent))' : 'none' }}
+                              />
+                            </div>
+                            <div className="meta">
+                              <div className="name">主图 {img.index}</div>
+                              <div className="sub">
+                                <span>
+                                  {isSaved
+                                    ? <Tag size="small" color="green">已入库</Tag>
+                                    : <Tag size="small">{isOn ? '已勾选' : '待选择'}</Tag>}
+                                </span>
+                                <span style={{ display: 'flex', gap: 4 }}>
+                                  <Tooltip content="在新窗口打开原图">
+                                    <Button size="small" theme="light"
+                                      onClick={() => window.open(img.url, '_blank', 'noreferrer')}><Icon name="view" size={12} /></Button>
+                                  </Tooltip>
+                                  <Tooltip content={isSaved ? '再次加入素材库' : '加入主图素材库'}>
+                                    <Button size="small" theme="solid" loading={isSaving} disabled={isSaving}
+                                      onClick={() => handleSaveOne(prod, img)}>
+                                      {isSaved ? '再次保存' : '＋ 加入'}
+                                    </Button>
+                                  </Tooltip>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : !prod?.ok ? (
+                    <div style={{ padding: '20px 12px', fontSize: 13, color: 'var(--muted-foreground)' }}>
+                      该链接未解析到主图，通常是链接错误或 1688 临时风控；请先在浏览器中打开确认能正常访问后再重试。
+                    </div>
+                  ) : null}
+                </section>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export { DesignStudio, CatsGallery, ResultsLibrary, LibraryGallery, Import1688Page }
+export default DesignStudio

@@ -1,0 +1,557 @@
+/* HeroUI v3 + Tailwind CSS v4
+ *
+ * 1) 刻意【不引入】Tailwind 的 preflight（base 层）：
+ *    preflight 会重置所有原生元素样式，会冲击本项目已有的 2500+ 行自定义 CSS
+ *    （App.css / mini-ui.css / tiktok-tokens.css）以及其余未迁移页面。
+ *    这里只加载 theme 变量 + utilities + HeroUI 组件样式，保证与现有样式共存。
+ * 2) 暗色：由 index.html 的 <html data-theme="dark"> 开启 HeroUI 内置暗色。
+ * 3) 品牌强调色：按 App.jsx 在 .app-shell 上写的 data-brand 切换 --accent 系列。
+ */
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "@heroui/styles";
+
+/* ===== 品牌强调色（HeroUI accent 系列）=====
+   数值由品牌主色换算成 oklch：
+     云眠花园 #fe2c55 -> oklch(0.6474 0.2381 17.70)
+     软居与猫 #14d6d0 -> oklch(0.7921 0.1343 191.19)
+     Luluna月下谣 #b265f0 -> oklch(0.6541 0.2060 307.17)
+   accent-soft 用于 Chip/标签等浅底场景，在暗色下压低亮度保证对比度。
+*/
+[data-brand="cloudsleepgarden"] {
+  --accent: oklch(0.6474 0.2381 17.7);
+  --accent-hover: oklch(0.7000 0.2450 17.7);
+  --accent-foreground: oklch(0.9800 0.0100 17.7);
+  --accent-soft: oklch(0.3200 0.0950 17.7);
+  --accent-soft-hover: oklch(0.3700 0.1050 17.7);
+  --accent-soft-foreground: oklch(0.8000 0.1400 17.7);
+}
+
+[data-brand="sofawithcat"] {
+  --accent: oklch(0.7921 0.1343 191.19);
+  --accent-hover: oklch(0.8400 0.1400 191.19);
+  --accent-foreground: oklch(0.1800 0.0300 191.19);
+  --accent-soft: oklch(0.3000 0.0550 191.19);
+  --accent-soft-hover: oklch(0.3500 0.0620 191.19);
+  --accent-soft-foreground: oklch(0.8300 0.1000 191.19);
+}
+
+[data-brand="lyrosdream"] {
+  --accent: oklch(0.6541 0.2060 307.17);
+  --accent-hover: oklch(0.7100 0.2120 307.17);
+  --accent-foreground: oklch(0.9800 0.0100 307.17);
+  --accent-soft: oklch(0.3200 0.0850 307.17);
+  --accent-soft-hover: oklch(0.3700 0.0950 307.17);
+  --accent-soft-foreground: oklch(0.8200 0.1300 307.17);
+}
+
+/* 俄语店铺 Облачный Сад：中等饱和度蓝色（替代默认高饱和青色） */
+[data-brand="oblachny_sad"] {
+  --accent: oklch(0.5800 0.1800 250.00);
+  --accent-hover: oklch(0.6300 0.1850 250.00);
+  --accent-foreground: oklch(0.9800 0.0100 250.00);
+  --accent-soft: oklch(0.3200 0.0750 250.00);
+  --accent-soft-hover: oklch(0.3700 0.0850 250.00);
+  --accent-soft-foreground: oklch(0.8200 0.1100 250.00);
+}
+
+/* ==========================================================
+   主图合成页作用域：.hero-page
+   ----------------------------------------------------------
+   问题：App.css 里的 `.card { ... }` 是「未分层」规则。CSS 层叠中
+   未分层样式优先于任何 @layer（包括 Tailwind 的 utilities 层），
+   于是它会盖掉 HeroUI Card 的 variant 背景 / 间距 / 圆角 / 边框，
+   也会盖掉本页写在 Card 上的 Tailwind 工具类（p-6、border-dashed 等）。
+   结果就是所有 Card 看起来都一个样、HeroUI variant 全部失效。
+
+   处理：只在 .hero-page 作用域内还原 HeroUI 的定义，
+   其余未迁移页面仍走 App.css 的老样式，互不影响。
+   ========================================================== */
+.hero-page .card {
+  padding: 16px;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: min(32px, var(--radius-3xl));
+  box-shadow: var(--surface-shadow);
+  background: var(--surface);
+}
+.hero-page .card--secondary { background: var(--surface-secondary); }
+.hero-page .card--tertiary { background: var(--surface-tertiary); }
+.hero-page .card--transparent {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* 上传区 = HeroUI Card + 虚线边框（含 hover / 拖拽 / 上传中 三态）
+   注意：dz-card 可能挂在 card--transparent 上，需显式恢复 border。 */
+.hero-page .dz-card,
+.app-hero .dz-card {
+  padding: 24px;
+  gap: 12px;
+  background: transparent;
+  border: 2px dashed var(--border-strong) !important;
+  border-radius: min(32px, var(--radius-3xl));
+  box-shadow: none;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.hero-page .dz-card:hover,
+.hero-page .dz-card:focus-visible {
+  border-color: var(--border-strong);
+  background: var(--surface-secondary);
+  outline: none;
+}
+.hero-page .dz-card--drag {
+  border-color: var(--border-strong);
+  background: var(--surface-secondary);
+}
+.hero-page .dz-card--busy {
+  opacity: .6;
+  pointer-events: none;
+}
+.hero-page .dz-tile,
+.app-hero .dz-tile {
+  width: 100%;
+  aspect-ratio: 1 / 1 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: hidden;
+  padding: 0 !important;
+  gap: 6px;
+  align-self: start;
+  background: transparent;
+  border: 2px dashed var(--border-strong) !important;
+  border-radius: var(--radius-xl);
+  box-shadow: none;
+  transition: background-color .15s ease;
+}
+.hero-page .dz-tile:hover,
+.hero-page .dz-tile:focus-visible {
+  background: var(--surface-secondary);
+  outline: none;
+}
+.hero-page .dz-tile--drag {
+  background: var(--surface-secondary);
+}
+.hero-page .dz-tile--busy {
+  opacity: .6;
+  pointer-events: none;
+}
+
+/* ==========================================================
+   App Shell 作用域：.app-hero
+   ----------------------------------------------------------
+   与 .hero-page 同理：App.css / tiktok-tokens.css 里 .app-shell、
+   .card 等「未分层」规则会盖掉 HeroUI 组件样式，这里在 .app-hero
+   作用域内还原，保证外壳（侧边栏 / 顶栏 / 主内容容器）与
+   HeroUI 主图合成页是同一套视觉语言，不再割裂。
+   ========================================================== */
+.app-hero {
+  background: var(--background);
+  color: var(--foreground);
+}
+.app-hero .card {
+  padding: 16px;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: min(32px, var(--radius-3xl));
+  box-shadow: var(--surface-shadow);
+  background: var(--surface);
+}
+.app-hero .card--secondary { background: var(--surface-secondary); }
+.app-hero .card--tertiary { background: var(--surface-tertiary); }
+.app-hero .card--transparent {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* 主题色纪律：品牌色只给「实心主行动按钮」和「高亮文案」。
+   HeroUI 默认把 .button--secondary 的前景设成 accent-soft-foreground，
+   导致所有次按钮文字都是品牌色。这里改回中性前景色。 */
+.hero-page .button--secondary,
+.app-hero .button--secondary {
+  --button-fg: var(--default-foreground);
+}
+/* Switch 的「已开启」是状态指示，改用语义成功色。 */
+.app-hero .switch {
+  --switch-control-bg-checked: var(--success);
+  --switch-control-bg-checked-hover: color-mix(in oklab, var(--success), white 14%);
+}
+
+/* ==========================================================
+   交互动效（点击 / 悬停 / 切换）
+   HeroUI 的 .button 自带 press 缩放（scale .97），这里统一
+   补齐外壳与已完成页里其余可点元素的按压回弹与色彩过渡。
+   ========================================================== */
+.app-hero,
+.hero-page {
+  --motion-fast: 130ms;
+  --motion-base: 220ms;
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+}
+
+/* 1) 按压回弹 */
+.app-hero button:not([disabled]):not([data-disabled]),
+.app-hero [role="button"]:not([data-disabled]),
+.app-hero [role="switch"],
+.app-hero [role="radio"],
+.app-hero [role="tab"],
+.hero-page button:not([disabled]),
+.hero-page [role="button"],
+.hero-page [role="radio"] {
+  transition:
+    transform var(--motion-fast) var(--ease-out),
+    background-color var(--motion-base) ease,
+    border-color var(--motion-base) ease,
+    box-shadow var(--motion-base) ease,
+    color var(--motion-base) ease;
+}
+.app-hero button:not([disabled]):not([data-disabled]):active,
+.app-hero [role="button"]:not([data-disabled]):active,
+.hero-page button:not([disabled]):active,
+.hero-page [role="button"]:active {
+  transform: scale(.97);
+}
+
+/* 2) 卡片悬停微反馈（只做边框/阴影，不使用主题色） */
+.app-hero .card,
+.hero-page .card {
+  transition:
+    transform var(--motion-base) var(--ease-out),
+    background-color var(--motion-base) ease,
+    border-color var(--motion-base) ease,
+    box-shadow var(--motion-base) ease;
+}
+
+/* 3) 实心主按钮按下时的一圈主题色光晕（唯一允许用主题色的非按钮元素之一） */
+.app-hero .button--primary:active,
+.hero-page .button--primary:active {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* 4) 切换页面时的淡入上移 */
+@keyframes hero-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.app-hero .tk-content > * {
+  animation: hero-fade-in var(--motion-base) var(--ease-out) both;
+}
+
+/* 5) 尊重系统「减少动态效果」设置 */
+@media (prefers-reduced-motion: reduce) {
+  .app-hero *,
+  .hero-page * {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* ==========================================================
+   滚动条隐藏：素材主图/猫咪素材等纵向滚动区域
+   隐藏滚动条轨道（thumb + track），保留滚动功能。
+   用户要求：去掉类似导航的长条视觉效果。 ========================================================== */
+.app-hero .scrollbar-hide,
+.hero-page .scrollbar-hide {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.app-hero .scrollbar-hide::-webkit-scrollbar,
+.hero-page .scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
+}
+
+/* ==========================================================
+   HeroUI Modal 补全样式
+   ----------------------------------------------------------
+   @heroui/styles 的 heroui.min.css 未包含 Modal 组件的
+   data-slot 样式（可能因版本/打包问题遗漏），导致 Modal
+   渲染了 DOM 但无定位/背景/尺寸 → 预览"不可见" +
+   Backdrop 不可见却捕获指针事件 → UI "卡死"。
+   以下为手工补全，对齐 HeroUI v3 Modal 的视觉规范。 ========================================================== */
+
+/* Modal Root：隐藏自身（不占位），仅作状态容器 */
+[data-slot="modal-root"] {
+  display: contents;
+}
+/* 关闭时强制隐藏所有子元素（防止 Backdrop 残留阻挡交互）
+   多重选择器覆盖 react-aria 各种关闭状态：data-entered=false / 属性移除 / data-open=false 等 */
+[data-slot="modal-root"][data-entered="false"],
+[data-slot="modal-root"]:not([data-entered="true"]),
+[data-slot="modal-root"][data-closed="true"] {
+  display: none !important;
+}
+[data-slot="modal-root"][data-entered="false"] [data-slot*="modal-"],
+[data-slot="modal-root"]:not([data-entered="true"]) [data-slot*="modal-"],
+[data-slot="modal-root"][data-closed="true"] [data-slot*="modal-"] {
+  display: none !important;
+}
+/* 兜底：任何隐藏状态下的 backdrop 必须消失 */
+[data-slot="modal-backdrop"][style*="display: none"],
+[data-slot="modal-backdrop"][hidden] {
+  display: none !important;
+}
+
+/* Modal Backdrop：全屏半透明遮罩 */
+[data-slot="modal-backdrop"] {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Modal Container：固定定位的弹窗容器（居中对齐）*/
+[data-slot="modal-container"] {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none; /* 让事件穿透到 Backdrop 处理 */
+}
+
+/* Modal Dialog：实际的弹窗内容框 */
+[data-slot="modal-dialog"] {
+  pointer-events: auto; /* 恢复对话框内的交互 */
+  background: var(--surface, #18181b);
+  border: 1px solid var(--border, #27272a);
+  border-radius: 14px;
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  max-height: 85vh;
+  max-width: 92vw;
+  width: fit-content;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  animation: modal-enter 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Modal Header：标题栏 */
+[data-slot="modal-header"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 0;
+  flex-shrink: 0;
+}
+
+/* Modal Heading：标题文字 */
+[data-slot="modal-heading"] {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--foreground, #fafafa);
+  line-height: 1.3;
+}
+
+/* Modal Body：内容区（可滚动）*/
+[data-slot="modal-body"] {
+  padding: 16px 20px;
+  flex: 1;
+  overflow: auto;
+  color: var(--foreground, #e4e4e7);
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+/* Body 内的直接子元素（如预览图容器）默认撑满宽度 */
+[data-slot="modal-body"] > * {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Modal Footer：底部按钮栏 */
+[data-slot="modal-footer"] {
+  padding: 0 20px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Modal Close Trigger：关闭按钮 */
+[data-slot="modal-close-trigger"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted, #a1a1aa);
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 130ms ease, color 130ms ease;
+}
+[data-slot="modal-close-trigger"]:hover {
+  background: var(--surface-secondary, #232326);
+  color: var(--foreground, #e4e4e7);
+}
+[data-slot="modal-close-trigger"]:active {
+  transform: scale(0.93);
+}
+
+/* ==========================================================
+   预览弹窗底部按钮（主图素材 / 猫咪素材 / 合成图 三处统一）
+   - 主按钮：实心（关闭）
+   - 副按钮：空心（下载 / 删除），统一中性/危险色
+   ========================================================== */
+.preview-btn {
+  font-size: 13px;
+  padding: 7px 16px;
+  border-radius: 9px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
+  transition: background-color .15s, border-color .15s, opacity .15s;
+  font-family: inherit;
+}
+.preview-btn-ghost {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground);
+}
+.preview-btn-ghost:hover { background: var(--surface-secondary); }
+.preview-btn-danger {
+  border: 1px solid rgba(220, 38, 38, .4);
+  background: transparent;
+  color: #fca5a5;
+}
+.preview-btn-danger:hover { background: rgba(220, 38, 38, .12); }
+.preview-btn-solid {
+  padding: 7px 20px;
+  border: none;
+  background: var(--foreground);
+  color: var(--background);
+  font-weight: 600;
+}
+.preview-btn-solid:hover { opacity: .88; }
+
+/* ==========================================================
+   HeroUI Tooltip 补全样式
+   ----------------------------------------------------------
+   同 Modal，heroui.min.css 缺少 Tooltip 的 data-slot 样式。
+   最小化补全：确保 Trigger 不阻挡点击事件透传。 ========================================================== */
+
+[data-slot="tooltip-trigger"] {
+  display: inline-flex;
+  /* 关键：不阻止 pointer events 透传到内部按钮 */
+  pointer-events: auto;
+}
+
+/* ==========================================================
+   全局弹窗居中（Semi Modal）
+   问题：Semi 自带 .semi-modal-wrap 两条规则冲突——
+   1) position:fixed  2) position:absolute;overflow:hidden
+   后者覆盖前者，导致 wrapper 相对最近的 position 祖先定位（非视口），
+   加之 .semi-modal-wrap-center 用 align-items:flex-start 顶部对齐不真正居中，
+   综合表现就是弹窗偏左 / 偏上。
+   修复：强制 fixed + flex 居中（横向纵向都 center）。 ============================== */
+.semi-modal-wrap {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  overflow: auto !important;
+  z-index: 1000 !important;
+}
+.semi-modal-wrap-center {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+/* Semi 弹窗本体别被 fixed/transform 容器破坏定位 */
+.semi-modal {
+  position: relative !important;
+}
+
+/* ==========================================================
+   全局 Toast 不留蒙层（自定义 tk-toast）
+   问题：toast.js 创建 .tk-toast-host 容器 + 逐条 .tk-toast 子元素，
+   但项目里没有任何 CSS 定义 .tk-toast-host —— 浏览器给 div 默认
+   display:block + 占据文档流位置（甚至盖住交互）。修复：
+   host 容器自身不响应事件 + 浮在视口顶部居中；每条 toast 才接收事件。 ===== */
+.tk-toast-host {
+  position: fixed !important;
+  top: 16px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 1100 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 8px !important;
+  pointer-events: none !important;  /* host 透传事件 */
+  width: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.tk-toast {
+  pointer-events: auto !important;  /* 单独的 toast 可以点击关闭 */
+}
+
+/* ==========================================================
+   HeroUI 弹窗居中（react-aria Modal: .modal__container）
+   问题：HeroUI 的 .modal__container 默认 width:800px（猜测）+ left:0，
+   容器只占视口左侧 800px，dialog 贴容器左对齐 → 视觉偏左。
+   修复：强制容器铺满视口 + flex 居中（已设 align-items:center justify-content:center 时居中失效，
+   因为容器 width 本身不够）。 ============================== */
+.modal__container {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  padding: 24px !important;
+  margin: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 99999 !important;
+}
+.modal__backdrop {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 99998 !important;
+}
+.modal__dialog {
+  position: relative !important;
+  margin: 0 auto !important;
+}

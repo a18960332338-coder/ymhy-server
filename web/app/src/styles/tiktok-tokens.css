@@ -1,0 +1,414 @@
+/* ==========================================================
+   云眠花园 · AI 家纺融合工作台 视觉令牌
+   品牌色：红 + 青霓虹（对齐参考模板）
+   中性色阶：已对齐 HeroUI v3 暗色（oklch hue 285.9 / C .006）——
+     旧值 #161823 / #1b1d29 是偏蓝的海军蓝，与 HeroUI 中性暗色并存会造成视觉割裂，已废弃，勿再使用。
+   ========================================================== */
+:root {
+  /* ===== 品牌色：红 + 青（对齐参考模板 ===== */
+  --tk-red-1000: #3d0210;
+  --tk-red-900:  #6b061d;
+  --tk-red-800:  #990c2b;
+  --tk-red-700:  #c01338;
+  --tk-red-600:  #e61e45;
+  --tk-red-500:  #fe2c55;  /* 主品牌色 */
+  --tk-red-400:  #ff6485;
+  --tk-red-300:  #ffa0b5;
+  --tk-red-200:  #ffc9d5;
+  --tk-red-100:  #ffe9ee;
+
+  --tk-cyan-1000: #022322;
+  --tk-cyan-900:  #054745;
+  --tk-cyan-800:  #086b68;
+  --tk-cyan-700:  #0c8f8b;
+  --tk-cyan-600:  #0fb3ae;
+  --tk-cyan-500:  #14d6d0;
+  --tk-cyan-400:  #25f4ee;  /* 品牌青 */
+  --tk-cyan-300:  #7cf8f4;
+  --tk-cyan-200:  #bafcfa;
+  --tk-cyan-100:  #e3fefd;
+
+  --tk-purple-1000: #2a0a3d;
+  --tk-purple-900:  #4a1170;
+  --tk-purple-800:  #6f1aa6;
+  --tk-purple-700:  #9333d6;
+  --tk-purple-600:  #a855f7;
+  --tk-purple-500:  #b265f0;  /* Luluna月下谣 品牌紫 */
+  --tk-purple-400:  #c98ffa;
+  --tk-purple-300:  #ddb5fc;
+  --tk-purple-200:  #ecd7fe;
+  --tk-purple-100:  #f6ecfe;
+
+  /* ===== 黑灰色阶（对齐 HeroUI v3 暗色中性色阶）=====
+     原色阶是偏蓝的海军蓝（彩度 C≈.022~.026），而 HeroUI 暗色是中性灰
+     （oklch, hue≈285.9, C≈.006），两套并存时会出现「新控件中性黑 /
+     老面板偏蓝」的割裂。这里保持每一级的用途不变，只做两件事：
+       1) 彩度降到 .006（与 HeroUI 一致），色相统一到 285.9 → 去掉蓝调
+       2) 表面几级的明度对齐 HeroUI 对应 token，让层次深度一致
+          1000→--background L12%   900→--surface        L21.03%
+          800 →--surface-secondary L25.7%   700→--border/default L28%
+     文本级（500~100）明度保持不变，只做中性化，避免影响对比度。 */
+  --tk-black-1000: #060508;  /* 背景 --tk-background   ← HeroUI --background L12% */
+  --tk-black-900:  #18181b;  /* 卡片 --tk-card          ← HeroUI --surface   L21.03% */
+  --tk-black-800:  #232326;  /* 次级面板/输入框底        ← HeroUI --surface-secondary L25.7% */
+  --tk-black-700:  #28282c;  /* 悬浮/选中/--tk-muted     ← HeroUI --border/default L28% */
+  --tk-black-600:  #37373b;  /* 强边框 */
+  --tk-black-500:  #5f5f63;
+  --tk-black-400:  #86868a;  /* 次级文本 */
+  --tk-black-300:  #acacb0;  /* 弱文本/--tk-muted-foreground */
+  --tk-black-200:  #d3d3d7;
+  --tk-black-100:  #ebebef;
+
+  /* ===== 白色系 ===== */
+  --tk-white-1000: #36363b;
+  --tk-white-900:  #5e5e66;
+  --tk-white-800:  #87878f;
+  --tk-white-700:  #ababb5;
+  --tk-white-600:  #c9c9d1;
+  --tk-white-500:  #dcdce2;
+  --tk-white-400:  #e8e8ec;
+  --tk-white-300:  #f2f2f4;
+  --tk-white-200:  #fafafb;
+  --tk-white-100:  #ffffff;  /* 前景文本 --tk-foreground */
+
+  /* ===== 语义别名（对齐模板 CSS vars）===== */
+  --tk-background: var(--tk-black-1000);
+  --tk-foreground: var(--tk-white-100);
+  --tk-card:       var(--tk-black-900);
+  --tk-card-foreground: var(--tk-white-100);
+  --tk-primary:   var(--tk-red-500);
+  --tk-primary-foreground: var(--tk-white-100);
+  --tk-secondary: var(--tk-black-800);
+  --tk-secondary-foreground: var(--tk-white-100);
+  --tk-muted:     var(--tk-black-700);
+  --tk-muted-foreground: var(--tk-black-300);
+  --tk-border:    rgba(255,255,255,.1);
+  --tk-input:     var(--tk-black-800);
+  --tk-ring:      var(--tk-cyan-400);
+  --tk-accent:    var(--tk-cyan-400);
+  --tk-accent-foreground: var(--tk-black-1000);
+
+  /* ===== 渐变色 ===== */
+  --tk-brand-gradient:      linear-gradient(90deg, #25f4ee 0%, #fe2c55 100%);
+  --tk-brand-gradient-soft: linear-gradient(90deg, rgba(37,244,238,.14) 0%, rgba(254,44,85,.14) 100%);
+  --tk-neon-glow-red:     0 0 0 1px rgba(254,44,85,.55), 0 10px 36px -6px rgba(254,44,85,.45);
+  --tk-neon-glow-cyan:    0 0 0 1px rgba(37,244,238,.55), 0 10px 36px -6px rgba(37,244,238,.35);
+
+  /* ===== 字体 ===== */
+  --tk-font-ui: "PingFang SC","HarmonyOS Sans SC","Inter",-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;
+  --tk-font-display: "PingFang SC","HarmonyOS Sans SC","Georgia",serif;
+  --tk-font-mono: "JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+  --tk-font-sans: var(--tk-font-ui);
+
+  /* ===== 圆角（对齐模板）===== */
+  --tk-radius-xs: 2px;
+  --tk-radius-sm: 6px;
+  --tk-radius-md: 8px;
+  --tk-radius-lg: 12px;
+  --tk-radius-xl: 16px;
+  --tk-radius-2: 2px;
+  --tk-radius-6: 6px;
+  --tk-radius-8: 8px;
+  --tk-radius-12: 12px;
+  --tk-radius-16: 16px;
+  --tk-radius-24: 24px;
+  --tk-radius-32: 32px;
+  --tk-radius-pill: 999px;
+  --tk-radius-shell: 32px;
+
+  /* ===== 阴影 ===== */
+  --tk-shadow-card:  0 2px 12px rgba(0,0,0,.45);
+  --tk-shadow-pop:   0 20px 60px -10px rgba(0,0,0,.75), 0 2px 6px rgba(0,0,0,.5);
+  --tk-shadow-focus: 0 0 0 2px rgba(254,44,85,.55);
+  --tk-glass-bg:     rgba(27,29,41,.72);
+  --tk-glass-bg-hot: rgba(49,51,64,.78);
+  --tk-glass-border: rgba(255,255,255,.06);
+  --tk-glass-blur:   saturate(180%) blur(18px);
+
+  /* ===== 抖音桌面版语义映射（兼容旧代码）===== */
+  --app-bg:         var(--tk-background);
+  --panel-bg:       var(--tk-card);
+  --panel-bg-soft:  rgba(27,29,41,.6);
+  --surface-bg:     var(--tk-black-800);
+  --surface-bg-2:   var(--tk-black-900);
+  --surface-secondary: rgba(255,255,255,.05);
+  --surface-tertiary:  rgba(255,255,255,.07);
+  --border:         rgba(255,255,255,.1);
+  --border-strong:  rgba(255,255,255,.16);
+  --text:           var(--tk-foreground);
+  --text-2:         var(--tk-black-200);
+  --text-3:         var(--tk-black-300);
+  --text-muted:     var(--tk-black-400);
+  --primary:        var(--tk-primary);
+  --primary-hover:  var(--tk-red-600);
+  --primary-active: var(--tk-red-700);
+  --accent:         var(--tk-accent);
+  --success:        #17c964;
+  --warning:        #f5a524;
+  --danger:         var(--tk-red-500);
+
+  /* ===== Semi UI 强制覆盖（深色 + 抖音色）===== */
+  --semi-color-primary: var(--tk-red-500);
+  --semi-color-primary-hover: var(--tk-red-600);
+  --semi-color-primary-active: var(--tk-red-700);
+  --semi-color-primary-light-default: var(--tk-red-100);
+  --semi-color-info: var(--tk-cyan-500);
+  --semi-color-success: #17c964;
+  --semi-color-warning: #f5a524;
+  --semi-color-danger: var(--tk-red-500);
+  --semi-color-text-0: var(--tk-white-100);
+  --semi-color-text-1: var(--tk-black-200);
+  --semi-color-text-2: var(--tk-black-300);
+  --semi-color-text-3: var(--tk-black-400);
+  --semi-color-border: rgba(255,255,255,.1);
+  --semi-color-default: var(--tk-black-700);
+  --semi-color-default-hover: var(--tk-black-600);
+  --semi-color-fill-0: var(--tk-black-800);
+  --semi-color-fill-1: var(--tk-black-700);
+  --semi-color-fill-2: var(--tk-black-600);
+  --semi-color-bg-0: var(--tk-background);
+  --semi-color-bg-1: var(--tk-card);
+  --semi-color-bg-2: var(--tk-black-800);
+  --semi-color-bg-3: var(--tk-black-700);
+  --semi-border-radius-small: var(--tk-radius-8);
+  --semi-border-radius-medium: var(--tk-radius-12);
+  --semi-border-radius-full: var(--tk-radius-pill);
+  --semi-font-family: var(--tk-font-ui);
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--app-bg);
+  color: var(--text);
+  font-family: var(--tk-font-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+/* 顶层容器：按 data-brand 切换品牌主题色 & 品牌专属霓虹径向渐变 */
+.app-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  isolation: isolate;
+}
+.app-shell::before {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+/* ===== 云眠花园：品牌红 ===== */
+.app-shell[data-brand="cloudsleepgarden"]::before {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(254,44,85,.10), transparent 60%),
+    radial-gradient(1000px 520px at 0% 110%, rgba(37,244,238,.09), transparent 60%);
+}
+.app-shell[data-brand="cloudsleepgarden"] {
+  --tk-primary:    var(--tk-red-500);
+  --tk-primary-foreground: var(--tk-white-100);
+  --tk-ring:       var(--tk-cyan-400);
+  --tk-accent:     var(--tk-cyan-400);
+  --tk-accent-foreground: var(--tk-black-1000);
+  --tk-brand-gradient:      linear-gradient(90deg, rgba(254,44,85,.88) 0%, #fe2c55 100%);
+  --tk-brand-gradient-soft: linear-gradient(90deg, rgba(254,44,85,.14) 0%, rgba(254,44,85,.14) 100%);
+  --tk-neon-glow-primary: 0 0 0 1px rgba(254,44,85,.55), 0 10px 36px -6px rgba(254,44,85,.45);
+  --tk-shadow-focus: 0 0 0 2px rgba(254,44,85,.55);
+
+  --primary:        var(--tk-red-500);
+  --primary-hover:  var(--tk-red-600);
+  --primary-active: var(--tk-red-700);
+  --danger:         var(--tk-red-500);
+  --semi-color-primary:        var(--tk-red-500);
+  --semi-color-primary-hover:  var(--tk-red-600);
+  --semi-color-primary-active: var(--tk-red-700);
+  --semi-color-primary-light-default: var(--tk-red-100);
+  --semi-color-danger: var(--tk-red-500);
+}
+
+/* ===== 软居与猫：品牌青蓝 ===== */
+.app-shell[data-brand="sofawithcat"]::before {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(20,214,208,.10), transparent 60%),
+    radial-gradient(1000px 520px at 0% 110%, rgba(37,244,238,.10), transparent 60%);
+}
+.app-shell[data-brand="sofawithcat"] {
+  --tk-primary:    var(--tk-cyan-500);
+  --tk-primary-foreground: var(--tk-black-1000);
+  --tk-ring:       var(--tk-cyan-400);
+  --tk-accent:     var(--tk-cyan-400);
+  --tk-accent-foreground: var(--tk-black-1000);
+  --tk-brand-gradient:      linear-gradient(90deg, #0fb3ae 0%, #14d6d0 100%);
+  --tk-brand-gradient-soft: linear-gradient(90deg, rgba(20,214,208,.14) 0%, rgba(37,244,238,.14) 100%);
+  --tk-neon-glow-primary: 0 0 0 1px rgba(20,214,208,.60), 0 10px 36px -6px rgba(20,214,208,.45);
+  --tk-shadow-focus: 0 0 0 2px rgba(20,214,208,.55);
+
+  --primary:        var(--tk-cyan-500);
+  --primary-hover:  var(--tk-cyan-600);
+  --primary-active: var(--tk-cyan-700);
+  --danger:         var(--tk-red-500); /* 危险色保持红，避免迷惑 */
+  --semi-color-primary:        var(--tk-cyan-500);
+  --semi-color-primary-hover:  var(--tk-cyan-600);
+  --semi-color-primary-active: var(--tk-cyan-700);
+  --semi-color-primary-light-default: var(--tk-cyan-100);
+  --semi-color-danger: var(--tk-red-500);
+  --semi-color-info:   var(--tk-cyan-500);
+}
+
+/* ===== Luluna月下谣：品牌紫 ===== */
+.app-shell[data-brand="lyrosdream"]::before {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(168,85,247,.10), transparent 60%),
+    radial-gradient(1000px 520px at 0% 110%, rgba(201,143,250,.10), transparent 60%);
+}
+.app-shell[data-brand="lyrosdream"] {
+  --tk-primary:    var(--tk-purple-500);
+  --tk-primary-foreground: var(--tk-white-100);
+  --tk-ring:       var(--tk-purple-400);
+  --tk-accent:     var(--tk-purple-400);
+  --tk-accent-foreground: var(--tk-black-1000);
+  --tk-brand-gradient:      linear-gradient(90deg, #9333d6 0%, #b265f0 100%);
+  --tk-brand-gradient-soft: linear-gradient(90deg, rgba(168,85,247,.14) 0%, rgba(201,143,250,.14) 100%);
+  --tk-neon-glow-primary: 0 0 0 1px rgba(168,85,247,.60), 0 10px 36px -6px rgba(168,85,247,.45);
+  --tk-shadow-focus: 0 0 0 2px rgba(168,85,247,.55);
+
+  --primary:        var(--tk-purple-500);
+  --primary-hover:  var(--tk-purple-600);
+  --primary-active: var(--tk-purple-700);
+  --danger:         var(--tk-red-500); /* 危险色保持红，避免迷惑 */
+  --semi-color-primary:        var(--tk-purple-500);
+  --semi-color-primary-hover:  var(--tk-purple-600);
+  --semi-color-primary-active: var(--tk-purple-700);
+  --semi-color-primary-light-default: var(--tk-purple-100);
+  --semi-color-danger: var(--tk-red-500);
+  --semi-color-info:   var(--tk-purple-500);
+}
+
+/* 移除旧的 body::before 霓虹（已搬到 .app-shell::before 里按 data-brand 切换） */
+body::before { display: none; }
+
+/* 滚动条（抖音深色·细）*/
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--tk-black-600);
+  border-radius: var(--tk-radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--tk-black-500); background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 通用工具类 */
+.tk-gradient-text {
+  background: var(--tk-brand-gradient);
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  font-weight: 800;
+}
+.tk-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: var(--tk-radius-pill);
+  font-size: 12px; font-weight: 600;
+  background: var(--tk-brand-gradient-soft);
+  color: color-mix(in srgb, var(--tk-primary) 90%, #fff);
+  border: 1px solid color-mix(in srgb, var(--tk-primary) 24%, transparent);
+}
+.tk-panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-radius-xl);
+  box-shadow: var(--tk-shadow-card);
+}
+.tk-surface {
+  background: var(--surface-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-radius-xl);
+}
+.tk-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
+  margin: 12px 0;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ===== Semi 组件深色调和 */
+.semi-button {
+  border-radius: var(--tk-radius-32) !important;
+  font-weight: 600;
+  height: 40px;
+  padding-inline: 20px !important;
+  transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
+}
+.semi-button:hover  { transform: translateY(-1px); }
+.semi-button-primary {
+  background: var(--tk-brand-gradient) !important;
+  border: 0 !important;
+  box-shadow: var(--tk-neon-glow-primary, var(--tk-neon-glow-red)) !important;
+}
+.semi-button-secondary {
+  background: var(--surface-bg) !important;
+  border: 1px solid var(--border-strong) !important;
+  color: var(--text) !important;
+}
+.semi-button-light { border-radius: var(--tk-radius-12) !important; }
+
+.semi-input-wrapper,
+.semi-select,
+.semi-textarea-wrapper {
+  border-radius: var(--tk-radius-12) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--surface-bg) !important;
+  color: var(--text) !important;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.semi-input-wrapper:hover,
+.semi-select:hover,
+.semi-textarea-wrapper:hover { border-color: var(--border-strong); }
+.semi-input-wrapper:focus-within,
+.semi-select:focus-within,
+.semi-textarea-wrapper:focus-within {
+  border-color: var(--primary) !important;
+  box-shadow: var(--tk-shadow-focus);
+}
+
+.semi-tag {
+  border-radius: var(--tk-radius-pill) !important;
+  padding-inline: 10px !important;
+}
+
+.semi-tabs-bar {
+  padding: 6px !important;
+  background: var(--tk-glass-bg) !important;
+  backdrop-filter: var(--tk-glass-blur);
+  -webkit-backdrop-filter: var(--tk-glass-blur);
+  border: 1px solid var(--tk-glass-border) !important;
+  border-radius: var(--tk-radius-16) !important;
+  width: fit-content !important;
+}
+.semi-tabs-tab {
+  border-radius: var(--tk-radius-12) !important;
+  padding: 8px 18px !important;
+  margin: 0 2px !important;
+  border: 0 !important;
+  font-weight: 600;
+}
+.semi-tabs-tab-active {
+  background: var(--surface-bg) !important;
+  color: var(--primary) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+
+.semi-card, .semi-card-body { border-radius: var(--tk-radius-16) !important; }
+.semi-banner, .semi-notification-wrapper, .semi-toast-wrapper {
+  border-radius: var(--tk-radius-12) !important;
+}

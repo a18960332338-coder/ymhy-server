@@ -1,0 +1,17 @@
+# 云眠花园主图生成工具 —— Python 运行依赖
+# 使用:
+#   pip install -r requirements.txt
+
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+python-multipart>=0.0.9
+Pillow>=10.0.0
+requests>=2.31.0
+httpx>=0.27.0
+PyYAML>=6.0
+python-dotenv>=1.0.1
+
+# COS 对象存储 + 证书校验
+certifi>=2024.2.2
+cos-python-sdk-v5>=1.9.24

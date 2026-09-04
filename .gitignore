@@ -1,0 +1,42 @@
+# —— 运行时 & 密钥（绝不可入库）——
+.env
+.venv/
+venv/
+# 含各服务 api_key/secret
+config.yaml
+*.pem
+*_id_ymhy*
+*.key
+
+# —— Python ——
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# —— Node / 前端 ——
+web/app/node_modules/
+web/app/dist/
+
+# —— 桌面打包 / 一次性产物 ——
+dist-electron/
+_packaging/
+_nb_edit/
+_apply_*.py
+_apply_*.cjs
+_patch_*.py
+_patch_*.cjs
+_write_jsx.py
+.tmp_parse_test.py
+
+# —— 运行数据 / 图像产物（2.9G，不进版本）——
+output/
+output_tmp/
+tmp_work/
+server.log
+*.log
+input/
+._*
+Thumbs.db
+$HOME/Library/Caches/CloudSleepGarden/

@@ -1,0 +1,110 @@
+{
+  "name": "cloud-sleep-garden-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "云眠花园主图生成工具 - 桌面版 (Semi Design + Electron)",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5173",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron ../../electron/main.js\"",
+    "electron:dir": "npm run build && electron-builder --dir",
+    "electron:pack": "npm run build && electron-builder --mac dir"
+  },
+  "dependencies": {
+    "@douyinfe/semi-icons": "^2.60.0",
+    "@douyinfe/semi-theme-default": "^2.60.0",
+    "@douyinfe/semi-ui": "^2.60.0",
+    "@heroui/react": "^3.2.4",
+    "@heroui/styles": "^3.2.4",
+    "@icon-park/react": "^1.4.2",
+    "lucide": "^1.37.0",
+    "lucide-react": "^1.37.0",
+    "morphicons": "^1.7.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3",
+    "sass": "^1.77.8",
+    "tailwindcss": "^4.3.3",
+    "vite": "6.2",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.cloudsleep.garden",
+    "productName": "云眠花园主图生成工具",
+    "asar": false,
+    "directories": {
+      "output": "../../dist-electron",
+      "buildResources": "build"
+    },
+    "files": [
+      {
+        "from": ".",
+        "filter": [
+          "dist/**/*"
+        ]
+      },
+      {
+        "from": "../electron",
+        "to": "electron",
+        "filter": [
+          "**/*"
+        ]
+      },
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../src",
+        "to": "src"
+      },
+      {
+        "from": "../../config.yaml",
+        "to": "config.yaml"
+      },
+      {
+        "from": "../../input",
+        "to": "input"
+      },
+      {
+        "from": "../../output",
+        "to": "output"
+      },
+      {
+        "from": "../../templates",
+        "to": "templates"
+      },
+      {
+        "from": "../../main.py",
+        "to": "main.py"
+      },
+      {
+        "from": "../../app.py",
+        "to": "app.py"
+      },
+      {
+        "from": "../../requirements.txt",
+        "to": "requirements.txt"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    }
+  }
+}
