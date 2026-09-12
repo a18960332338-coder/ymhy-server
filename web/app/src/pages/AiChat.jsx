@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api from '../api'
 import Icon from '../components/Icon'
-import brandLogo from '../assets/brand-logo.jpg'
+import brandLogo from '../assets/brand-logo.png'
 import { getBrandAI } from '../presets'
 import { aiSessionsKey, aiPresetKey } from '../accountKeys'
 import {

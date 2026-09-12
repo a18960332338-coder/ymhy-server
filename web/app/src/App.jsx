@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './styles/tiktok-tokens.css'
 import './styles/mini-ui.css'
 import './App.css'
-import brandLogo from './assets/brand-logo.jpg'
+import brandLogo from './assets/brand-logo.png'
 import { DesignStudio, ResultsLibrary, Import1688Page } from './pages/DesignStudio'
 import VideoBatchStudio from './pages/VideoBatchStudio'
 import VideoReplicate from './pages/VideoReplicate'
@@ -75,8 +75,8 @@ import {
   Tooltip,
 } from '@heroui/react'
 
-const APP_NAME = '云眠花园'
-const APP_SUB = '电商工具'
+const APP_NAME = '云眠AI'
+const APP_SUB = '定制化电商解决方案'
 
 const DEFAULT_BRAND = 'cloudsleepgarden'
 
@@ -244,7 +244,7 @@ const NAV_GROUPS = [
     label: '其他功能',
     icon: 'more',
     items: [
-      { key: TAB_KEY_CHAT,    label: '云眠AI',       icon: 'message' },
+      { key: TAB_KEY_CHAT,    label: 'Cloud Chat',   icon: 'message' },
       { key: TAB_KEY_1688,    label: '1688链接导入', icon: 'link' },
     ],
   },
