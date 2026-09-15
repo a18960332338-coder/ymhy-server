@@ -1034,8 +1034,9 @@ export default function AiChat({ brand, account }) {
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                 {pendingImages.map(p => (
                   <div key={p.id} style={{ position: 'relative' }}>
+                    {/* 64px 小预览走缩略图；p.url 本身是原图，仍作为附加图片提交给模型 */}
                     <img
-                      src={p.url}
+                      src={api.thumbOf(p.url)}
                       alt={p.name}
                       style={{
                         width: 64, height: 64, objectFit: 'cover', borderRadius: 10,
@@ -1205,7 +1206,8 @@ export default function AiChat({ brand, account }) {
                         border: '1px solid var(--border)', background: 'var(--surface-tertiary)',
                       }}
                     >
-                      <img src={img.url} alt={img.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                      {/* 网格显示走缩略图；img.url 是原图，仍作为附加图片提交给模型 */}
+                      <img src={api.thumbOf(img.url)} alt={img.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                     </div>
                   ))
                 )}

@@ -1930,7 +1930,8 @@ export default function VideoBatchStudio(props) {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 12 }}>
                   {generatedImages.map(im => (
                     <div key={im.name} style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface-bg-2)' }}>
-                      <img src={im.url} alt={im.name} style={{ width: '100%', aspectRatio: '9/16', objectFit: 'cover', display: 'block' }} />
+                      {/* 显示走缩略图；im.url 本身是原图，仍用于「用作参考图」提交后端 */}
+                      <img src={api.thumbOf(im.url)} alt={im.name} style={{ width: '100%', aspectRatio: '9/16', objectFit: 'cover', display: 'block' }} />
                       <div style={{ padding: '6px 8px', fontSize: 10, color: 'var(--muted-foreground)', display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'center' }}>
                         <span>{fmtDay(im.mtime)}</span>
                         <button onClick={() => onPickerSelect(im)} style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>用作参考图</button>
@@ -2031,7 +2032,8 @@ export default function VideoBatchStudio(props) {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 12 }}>
                       {images.map(im => (
                         <div key={im.name} onClick={() => onPickerSelect(im)} style={{ cursor: 'pointer', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface-bg-2)' }} title={im.name}>
-                          <img src={im.url} alt={im.name} style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }} />
+                          {/* 显示走缩略图；im.url 本身是原图，仍用于「用作参考图」提交后端 */}
+                          <img src={api.thumbOf(im.url)} alt={im.name} style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }} />
                           <div style={{ padding: '6px 8px', fontSize: 10, color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{im.name}</div>
                         </div>
                       ))}

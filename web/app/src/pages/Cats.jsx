@@ -41,7 +41,7 @@ export default function Cats({ onToast }) {
             {data.resources.map(r => (
               <div className="image-card" key={r.md5} onClick={() => setPreview(r)}>
                 <div className="image-thumb">
-                  <img src={api.imageUrl('cat', r.name)} alt={r.name} />
+                  <img src={api.thumbOf(api.imageUrl('cat', r.name))} alt={r.name} />
                 </div>
                 <div className="image-meta">
                   <b>{r.name}</b><br />

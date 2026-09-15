@@ -114,6 +114,20 @@ export const api = {
     const cat = bucket === 'cats' ? 'cat' : bucket === 'mains' ? 'crawled' : bucket
     return fullUrl(`/api/image/${encodeURIComponent(cat)}/${encodeURIComponent(name)}${_qs({ brand: opts.brand, w: width })}`)
   },
+  // 把「已经拼好的图片 URL」就地转成缩略图 URL —— 供列表 / 网格 / 卡片等小尺寸显示使用。
+  //
+  // 为什么需要它：生成图原图是 4–7MB 的 PNG（NanoBanana 出图未压缩），而服务器公网上行
+  // 只有 ~70KB/s，一张原图要 85 秒才传完 —— 卡片墙会成片「转圈」。缩略图由后端 Pillow
+  // 生成 JPEG（480 宽约 60–80KB，1–2 秒）并长期缓存，视觉上在卡片尺寸内几乎无差别。
+  //
+  // 使用边界（重要）：**只用于显示**。下载（a.href）、大图预览、提交给后端的参考图路径
+  // 一律继续用原图 URL，切勿用本函数，否则会牺牲成品质量。
+  thumbOf(url, width = 480) {
+    if (!url || typeof url !== 'string') return url || ''
+    if (!url.includes('/api/image/')) return url // COS 直链 / data URL / blob 原样返回
+    if (/[?&]w=\d/.test(url)) return url // 已带 w 参数，避免重复叠加
+    return url + (url.includes('?') ? '&' : '?') + 'w=' + width
+  },
   // 与 imageUrl 相同，但返回 Promise 用于需要鉴权/签名/回退的场景
   async resolveImageUrl(bucket, name, opts = {}) {
     const raw = this.imageUrl(bucket, name, opts)
@@ -212,10 +226,16 @@ export const api = {
         console.error('suiteStream parse error', e, event.data)
       }
     }
-    es.onerror = (err) => {
-      console.error('suiteStream error', err)
-      es.close()
-      if (onError) onError('连接断开')
+    es.onerror = () => {
+      // 连接中断（网络抖动 / 反向代理长连接超时）时**不要 close** ——
+      // EventSource 自带自动重连，close() 会把它杀掉，导致「一直报连接断开且不再恢复」。
+      // 只有浏览器彻底放弃（readyState=2 CLOSED，如 4xx / 服务不可达）才上报错误。
+      if (es.readyState === 2) {
+        console.warn('suiteStream 已关闭（浏览器放弃重连）')
+        if (onError) onError('连接断开')
+      } else {
+        console.warn('suiteStream 连接中断，浏览器自动重连中…')
+      }
     }
     return es
   },

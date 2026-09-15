@@ -395,14 +395,18 @@ function DomesticTpl({ brand }) {
   const loadCustom = useCallback(async () => {
     try {
       const r = await api.images(TPL_BUCKET, { brand })
-      const items = (r?.images || []).map(it => ({
-        id: 'custom_' + it.name,
-        builtin: false,
-        platform: '自定义',
-        title: it.name,
-        name: it.name,
-        src: api.imageUrl(TPL_BUCKET, it.name, { brand }),
-      }))
+      const items = (r?.images || []).map(it => {
+        const full = api.imageUrl(TPL_BUCKET, it.name, { brand })
+        return {
+          id: 'custom_' + it.name,
+          builtin: false,
+          platform: '自定义',
+          title: it.name,
+          name: it.name,
+          src: full, // 原图：会被 loadImage() 载入做 canvas 合成，禁止换缩略图
+          thumb: api.thumbOf(full), // 缩略图：仅列表卡片显示
+        }
+      })
       setCustomTpls(items)
     } catch { setCustomTpls([]) }
   }, [brand])
@@ -841,7 +845,7 @@ function DomesticTpl({ brand }) {
                   }}
                 >
                   <div style={{ aspectRatio: '1 / 1', background: 'transparent', position: 'relative' }}>
-                    <img src={t.src} alt={t.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    <img src={t.thumb || t.src} alt={t.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                     {active && (
                       <span style={{ position: 'absolute', top: 6, left: 6, background: 'var(--success)', color: '#fff', padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700 }}>✓ 已选</span>
                     )}
@@ -1479,7 +1483,8 @@ function CrossTemplateLibrary({ brand }) {
         category: '促销标签',
         size: it.size,
         mtime: it.mtime,
-        src: api.imageUrl(CROSS_TPL_BUCKET, it.name, { brand }),
+        src: api.imageUrl(CROSS_TPL_BUCKET, it.name, { brand }), // 原图：合成用
+        thumb: api.thumbOf(api.imageUrl(CROSS_TPL_BUCKET, it.name, { brand })), // 缩略图：显示用
       })))
     } catch { setCustom([]) }
   }, [brand])
@@ -1730,11 +1735,15 @@ function CrossTemplateLibrary({ brand }) {
     setCropAddSel(new Set())
     try {
       const r = await api.images(CROP_RESULTS_BUCKET, { brand })
-      setCropAddItems((r?.images || []).map(it => ({
-        name: it.name,
-        url: api.imageUrl(CROP_RESULTS_BUCKET, it.name, { brand }),
-        mtime: it.mtime,
-      })))
+      setCropAddItems((r?.images || []).map(it => {
+        const full = api.imageUrl(CROP_RESULTS_BUCKET, it.name, { brand })
+        return {
+          name: it.name,
+          url: full, // 原图：加入模版库时会 loadImage→canvas 重绘后上传，禁止换缩略图
+          thumb: api.thumbOf(full), // 缩略图：仅弹窗网格显示
+          mtime: it.mtime,
+        }
+      }))
     } catch {
       setCropAddItems([])
     } finally {
@@ -2019,7 +2028,7 @@ function CrossTemplateLibrary({ brand }) {
                   }}
                 >
                   <div style={{ aspectRatio: '3 / 4', background: 'transparent', position: 'relative' }}>
-                    <img src={t.src} alt={t.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    <img src={t.thumb || t.src} alt={t.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                     {active && (
                       <span style={{ position: 'absolute', top: 6, left: 6, background: 'var(--success)', color: '#fff', padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700 }}>✓ 已选</span>
                     )}
@@ -2199,7 +2208,7 @@ function CrossTemplateLibrary({ brand }) {
                 const sel = cropAddSel.has(it.name)
                 return (
                   <div key={it.name} onClick={() => toggleCropAdd(it.name)} style={{ position: 'relative', cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: `2px solid ${sel ? '#fff' : 'var(--border)'}` }}>
-                    <img src={it.url} alt="" loading="lazy" style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }} />
+                    <img src={it.thumb || it.url} alt="" loading="lazy" style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }} />
                     {sel && <span style={{ position: 'absolute', top: 4, left: 4, background: 'var(--success)', color: '#fff', padding: '1px 6px', borderRadius: 999, fontSize: 10 }}><Icon name="check" size={10} /></span>}
                     <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,.5)', color: '#fff', fontSize: 9, padding: '2px 4px', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fmtDay(it.mtime)}</div>
                   </div>
@@ -2304,7 +2313,7 @@ export function TemplateResultLibrary({ brand }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
           {images.map(it => {
             const sel = selected.has(it.name)
-            const url = api.imageUrl(RESULTS_BUCKET, it.name, { brand })
+            const url = api.thumbOf(api.imageUrl(RESULTS_BUCKET, it.name, { brand }))
             return (
               <div key={it.name} onClick={() => toggle(it.name)} style={{ position: 'relative', cursor: 'pointer', borderRadius: 10, overflow: 'hidden', border: `2px solid ${sel ? '#fff' : 'var(--border)'}` }}>
                 <img src={url} alt="" loading="lazy" style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }} />
@@ -2427,7 +2436,7 @@ function CropResultsLibrary({ brand }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
           {images.map(it => {
             const sel = selected.has(it.name)
-            const url = api.imageUrl(CROP_RESULTS_BUCKET, it.name, { brand })
+            const url = api.thumbOf(api.imageUrl(CROP_RESULTS_BUCKET, it.name, { brand }))
             return (
               <div key={it.name} onClick={() => toggle(it.name)} style={{ position: 'relative', cursor: 'pointer', borderRadius: 10, overflow: 'hidden', border: `2px solid ${sel ? '#fff' : 'var(--border)'}` }}>
                 <img src={url} alt="" loading="lazy" style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', display: 'block' }} />

@@ -5,6 +5,7 @@ import Icon from '../components/Icon'
 import bananaIcon from '../assets/banana-icon.png'
 import { TemplateResultLibrary } from './TemplateStudio'
 import { lastModelKey } from '../accountKeys'
+import { useImageDims, useContainerWidth, layoutMasonryRowMajor } from '../masonry'
 
 // === HeroUI v3 适配层 ====================================================
 // 把原来的「纯 HTML + 自定义 CSS」基础组件换成 HeroUI v3 组件，
@@ -346,6 +347,9 @@ function Tooltip({ content, children }) {
 const BUCKET_MAIN = 'mains'
 const BUCKET_CAT = 'cats'
 const BUCKET_OUT = 'synthesized'
+// 网格缩略图宽度：列表里可能有上百张图，统一走 ?w= 缩略图（后端 Pillow 生成并长期缓存）。
+// 220px 的格子配 480px 资源足够 2x 屏清晰，单图从 ~MB 级降到几十 KB。
+const GRID_THUMB_W = 480
 
 const BUCKET_LABEL = (brand) => {
   const isSofa = brand === 'sofawithcat'
@@ -632,7 +636,7 @@ function ImageGrid({ bucket, list, selected, onToggle, onDeleted, brand, addTile
             ].join(' ')}
           >
             <img
-              src={api.imageUrl(bucket, name, { brand })}
+              src={api.thumbOf(api.imageUrl(bucket, name, { brand }), GRID_THUMB_W)}
               alt={name}
               loading="lazy"
               className="h-full w-full object-cover"
@@ -691,8 +695,14 @@ function ImageGrid({ bucket, list, selected, onToggle, onDeleted, brand, addTile
 }
 
 // ---------- SmartImg ----------
-function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize, ...rest }) {
-  const [src, setSrc] = useState(() => api.imageUrl(bucket, name, { brand }))
+function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize, width, ...rest }) {
+  // width 有值时走 ?w= 缩略图接口：列表/网格里动辄上百张图，逐个拉原图（~MB 级）会把
+  // 浏览器同域连接池占满，导致其它请求（含弹窗、接口）排队几十秒。缩略图同样能拿到正确宽高比。
+  const mkUrl = useCallback(
+    (n) => (width ? api.thumbUrl(bucket, n, width, { brand }) : api.imageUrl(bucket, n, { brand })),
+    [bucket, brand, width],
+  )
+  const [src, setSrc] = useState(() => mkUrl(name))
   const [tried, setTried] = useState(false)
   const bucketRef = useRef(bucket)
   const nameRef = useRef(name)
@@ -701,9 +711,9 @@ function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize
       bucketRef.current = bucket
       nameRef.current = name
       setTried(false)
-      setSrc(api.imageUrl(bucket, name, { brand }))
+      setSrc(mkUrl(name))
     }
-  }, [bucket, name, brand])
+  }, [bucket, name, brand, mkUrl])
   const handleLoad = useCallback((e) => {
     if (onNaturalSize) {
       const el = e.currentTarget || e.target
@@ -715,7 +725,7 @@ function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize
   const onImgError = useCallback((e) => {
     if (tried) { onError && onError(e); return }
     setTried(true)
-    const raw = api.imageUrl(bucket, name, { brand })
+    const raw = mkUrl(name)
     const base = raw.replace(/\.[^./?#]*([?#]|$)/, '$1')
     const exts = bucket === BUCKET_OUT ? ['.jpg', '.jpeg', '.webp', '.png'] : ['.jpg', '.jpeg', '.png']
     const hasOriginalExt = /\.(jpg|jpeg|png|webp)$/i.test(raw.split('?')[0].split('#')[0])
@@ -734,105 +744,10 @@ function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize
         setSrc(base + cand[idx++])
       }
     }
-  }, [bucket, name, onError, tried, brand])
+  }, [bucket, name, onError, tried, brand, mkUrl])
   return <img src={src} alt={alt} style={style} onError={onImgError} onLoad={handleLoad} {...rest} />
 }
 
-// ---------- 图片尺寸批量预加载（瀑布流横向行优先排版用）----------
-function useImageDims(names, urlOf) {
-  const [dims, setDims] = useState({})
-  const listKey = (names || []).join('|')
-  useEffect(() => {
-    if (!names || !names.length) return
-    let alive = true
-    const cache = { ...dims }
-    Promise.all(names.map(n => new Promise(resolve => {
-      if (cache[n]) return resolve()
-      const img = new Image()
-      img.onload = () => { cache[n] = { w: img.naturalWidth, h: img.naturalHeight }; resolve() }
-      img.onerror = () => resolve()
-      img.src = urlOf(n)
-    }))).then(() => { if (alive) setDims(cache) })
-    return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listKey])
-  // 实时上报（SmartImg onLoad 用）：只 patch 单项，不重跑批量预加载
-  const reportDim = useCallback((name, dim) => {
-    setDims(prev => {
-      const old = prev[name]
-      if (old && old.w === dim.w && old.h === dim.h) return prev
-      return { ...prev, [name]: dim }
-    })
-  }, [])
-  return [dims, reportDim]
-}
-
-// 测量容器真实宽度（直接读 DOM，绕开 React state 时序问题）：
-// 每次渲染后都执行 useLayoutEffect —— 切 tab 时 panel 重新挂载、ref 重新绑定，
-// 此时能读到新宽度并 setState 触发重渲染（相同值 React bail out 不会死循环）。
-function useContainerWidth(ref) {
-  const [w, setW] = useState(0)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const update = () => {
-      const v = el.clientWidth || el.offsetWidth || 0
-      setW((prev) => (prev === v ? prev : v))
-    }
-    update()
-    let ro = null
-    if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(update)
-      ro.observe(el)
-    }
-    window.addEventListener('resize', update)
-    return () => {
-      if (ro) ro.disconnect()
-      window.removeEventListener('resize', update)
-    }
-  }) // 刻意不传依赖：每次渲染都执行（ref 绑定/解绑无法用依赖数组表达）
-  return w
-}
-
-// 行优先(row-major)自适应宽度布局：
-// - 列数 cols：n <= bestCols*2 时取 ceil(n/2)（限制 1-2 行），否则用 bestCols（多行）
-// - 行内图片均分宽度，但 w 受 n 控制避免 1-2 张图撑满
-// - 末行不满时图左对齐，右侧留白
-function layoutMasonryRowMajor(items, dims, containerWidth, colWidth, gap) {
-  const safeW = Math.max(containerWidth || 0, colWidth * 1.5)
-  // 容器最佳列数：让 actualColWidth ≥ 80 且距 colWidth 目标最近
-  let bestCols = 1
-  let bestDist = Infinity
-  for (let tryCols = 1; tryCols <= 12; tryCols++) {
-    const cw = (safeW - (tryCols - 1) * gap) / tryCols
-    if (cw < 80) break
-    const dist = Math.abs(cw - colWidth)
-    if (dist < bestDist) { bestDist = dist; bestCols = tryCols }
-  }
-  const n = items.length
-  // ★ 所有 tab 布局统一：一律按容器最佳列数（不随张数变化）
-  const cols = bestCols
-  const w = Math.floor((safeW - (cols - 1) * gap) / cols)
-  // ★ 列贪心（最短列优先）：每张图贴当前最矮列的底部 → 图片紧密堆叠无空隙
-  const colHeights = new Array(cols).fill(0)
-  const placed = []
-  for (const it of items) {
-    let ratio = 1
-    const d = dims[it.name]
-    if (d && d.w && d.h) ratio = d.h / d.w
-    const h = Math.max(40, Math.round(w * ratio))
-    // 找当前最矮列
-    let col = 0
-    for (let i = 1; i < cols; i++) {
-      if (colHeights[i] < colHeights[col]) col = i
-    }
-    const x = Math.floor(col * (w + gap))
-    const y = colHeights[col]
-    colHeights[col] = y + h + gap
-    placed.push({ ...it, _x: x, _y: y, _w: w, _h: h })
-  }
-  return { placed, cols, totalH: Math.max(...colHeights, 0) }
-}
 
 // ---------- CanvasPreview（严格对齐参考：底部渐变叠加层 + meta/操作按钮）----------
 function CanvasPreview({ mainName, catName, outputName, loading = false, stageStatus = null, stageMessage = '', progress = 0, brand }) {
@@ -1924,7 +1839,7 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
 }
 
 // ---------- CatsGallery ----------
-function CatsGallery({ brand }) {
+function CatsGallery({ brand, active = true }) {
   const fileRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [list, setList] = useState([])
@@ -1938,6 +1853,8 @@ function CatsGallery({ brand }) {
       .catch(() => setList([]))
   }, [brand])
   useEffect(() => { refresh() }, [refresh, brand])
+  // tab 激活时重新拉取：组件仅挂载时请求一次，若那次失败（页面初始加载尚未就绪）会一直空列表
+  useEffect(() => { if (active) refresh() }, [active, refresh])
 
   const deleteOne = async (name) => {
     try {
@@ -1993,7 +1910,7 @@ function CatsGallery({ brand }) {
             {filtered.map(it => (
               <div key={it.name} className="library-card">
                 <div className="thumb" onClick={() => setPreview(it)} style={{ cursor: 'zoom-in' }}>
-                  <img src={api.imageUrl(BUCKET_CAT, it.name, { brand })} alt={it.name} loading="lazy" />
+                  <img src={api.thumbOf(api.imageUrl(BUCKET_CAT, it.name, { brand }), GRID_THUMB_W)} alt={it.name} loading="lazy" />
                 </div>
                 <div className="meta">
                   <div className="sub">
@@ -2072,7 +1989,7 @@ function CatsGallery({ brand }) {
 function SelectableGrid({ items = [], brand, selected, onToggle, onPreview, emptyIcon = 'magic', emptyText }) {
   const gridRef = useRef(null)
   const wrapW = useContainerWidth(gridRef)
-  const [dims, reportDim] = useImageDims(items.map(it => it.name), n => api.imageUrl(BUCKET_OUT, n, { brand }))
+  const [dims, reportDim] = useImageDims(items.map(it => it.name), n => api.thumbUrl(BUCKET_OUT, n, GRID_THUMB_W, { brand }))
   const layout = layoutMasonryRowMajor(items, dims, wrapW || 880, 220, 12)
 
   if (items.length === 0) {
@@ -2097,7 +2014,7 @@ function SelectableGrid({ items = [], brand, selected, onToggle, onPreview, empt
             onClick={() => onToggle(it.name)}
           >
             <div className="thumb" style={{ cursor: isSelected ? 'zoom-out' : 'zoom-in', position: 'relative', width: '100%', height: '100%' }}>
-              <SmartImg bucket={BUCKET_OUT} name={it.name} alt={it.name} loading="lazy" brand={brand} onNaturalSize={reportDim}
+              <SmartImg bucket={BUCKET_OUT} name={it.name} alt={it.name} loading="lazy" brand={brand} width={GRID_THUMB_W} onNaturalSize={reportDim}
                 style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }} />
               {/* 右上角勾选框（常驻） */}
               <button
@@ -2668,10 +2585,10 @@ function ResultsLibrary({ active = true, brand, buckets = {} }) {
 
         {/* 素材库 */}
         <Tabs.Panel id={TAB_MAINS} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <LibraryGallery brand={brand} />
+          <LibraryGallery brand={brand} active={tab === TAB_MAINS} />
         </Tabs.Panel>
         <Tabs.Panel id={TAB_CATS} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <CatsGallery brand={brand} />
+          <CatsGallery brand={brand} active={tab === TAB_CATS} />
         </Tabs.Panel>
 
         {/* 其他生成图（img_* 图片生成功能产出） */}
@@ -2782,7 +2699,7 @@ function ResultsLibrary({ active = true, brand, buckets = {} }) {
 }
 
 // ---------- LibraryGallery（主图素材库页面，严格对齐主页 library-grid 风格）----------
-function LibraryGallery({ brand }) {
+function LibraryGallery({ brand, active = true }) {
   const BUCKET = BUCKET_MAIN
   const fileRef = useRef(null)
   const [busy, setBusy] = useState(false)
@@ -2805,6 +2722,8 @@ function LibraryGallery({ brand }) {
   }, [brand, BUCKET])
 
   useEffect(() => { refresh() }, [refresh, brand])
+  // tab 激活时重新拉取，避免首次加载失败后列表一直为空
+  useEffect(() => { if (active) refresh() }, [active, refresh])
 
   const deleteOne = async (name) => {
     try {
@@ -2869,7 +2788,7 @@ function LibraryGallery({ brand }) {
             {filtered.map(it => (
               <div key={it.name} className="library-card">
                 <div className="thumb" onClick={() => setPreview(it)} style={{ cursor: 'zoom-in' }}>
-                  <SmartImg bucket={BUCKET} name={it.name} alt={it.name} loading="lazy" brand={brand} />
+                  <SmartImg bucket={BUCKET} name={it.name} alt={it.name} loading="lazy" brand={brand} width={GRID_THUMB_W} />
                 </div>
                 <div className="meta">
                   <div className="sub">

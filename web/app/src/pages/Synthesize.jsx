@@ -158,7 +158,7 @@ export default function Synthesize({ onToast }) {
               cover={
                 <img
                   alt="合成结果预览"
-                  src={api.imageUrl('synthesized', result.name)}
+                  src={api.thumbOf(api.imageUrl('synthesized', result.name))}
                   style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', cursor: 'zoom-in' }}
                   onClick={() => setPreview(result.name)}
                 />

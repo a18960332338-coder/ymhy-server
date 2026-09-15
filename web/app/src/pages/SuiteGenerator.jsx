@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api from '../api'
 import Icon from '../components/Icon'
 import {
@@ -10,6 +10,7 @@ import {
   ToggleButton,
 } from '@heroui/react'
 import { HeroSelect, HeroTextArea } from '../components/ui'
+import { useImageDims, useContainerWidth, layoutMasonryRowMajor } from '../masonry'
 
 // 套图生成：左侧与豆包 Agent 对话（确认/取消按钮 + 勾选卡片），右侧生成预览区
 
@@ -40,10 +41,18 @@ const STATUS_META = {
   fail:       { text: '失败',     color: 'var(--danger)' },
 }
 
+// 套图结果卡片显示用的缩略图宽度。
+// 卡片宽度约 180–240px，480 在 2x 屏上也够清晰；而后端原图是 6MB PNG，
+// 服务器公网上行 ~70KB/s 时一张要 85 秒 —— 卡片会长时间空白转圈。
+const CARD_THUMB_W = 480
+
 function imgSrc(u) {
   if (!u) return ''
-  if (u.startsWith('/') && api.baseUrl) return api.baseUrl + u
-  return u
+  // 生成完成后卡片只需「看得清」，一律走缩略图接口（后端 Pillow 生成 JPEG 并长期缓存）。
+  // 原图 URL 仍保留在 it.url 里，供「点击查看大图 / 传给后端」使用，二者互不影响。
+  const s = api.thumbOf(u, CARD_THUMB_W)
+  if (s.startsWith('/') && api.baseUrl) return api.baseUrl + s
+  return s
 }
 
 // HeroUI 下拉 — 基于命名空间 Select（HeroUI v3 真正的复合 Select，不是 Popover 自建）
@@ -51,6 +60,46 @@ function imgSrc(u) {
 function HeroDropdown({ value, options, onChange, minWidth }) {
   const mapped = (Array.isArray(options) ? options : []).map(o => ({ value: o.key, label: o.label }))
   return <HeroSelect value={value} onChange={onChange} options={mapped} className="w-full" />
+}
+
+// 选择器图片墙：复用与图库完全相同的「横向行优先瀑布流」算法（layoutMasonryRowMajor），
+// 保证排序方向、列数、间距与图库一致；不再用 CSS column（竖向填充）导致顺序看着是歪的。
+function PickerGrid({ imgs, onSelect }) {
+  const gridRef = useRef(null)
+  const wrapW = useContainerWidth(gridRef)
+  const urlMap = useMemo(() => {
+    const m = {}
+    for (const im of imgs) m[im.name] = im.url
+    return m
+  }, [imgs])
+  const [dims, reportDim] = useImageDims(imgs.map(i => i.name), (n) => urlMap[n] || '')
+  const layout = layoutMasonryRowMajor(imgs, dims, wrapW || 720, 200, 12)
+  return (
+    <div ref={gridRef} style={{ position: 'relative', height: layout.totalH, minHeight: 120 }}>
+      {layout.placed.map(it => (
+        <div
+          key={it.name}
+          onClick={() => onSelect(it)}
+          role="button"
+          title="点击选择这张图"
+          style={{
+            position: 'absolute', left: it._x, top: it._y, width: it._w, height: it._h,
+            borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)',
+            background: 'var(--surface-bg-2)', cursor: 'pointer',
+            transition: 'border-color .15s ease, transform .15s ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.transform = 'translateY(-2px)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'none' }}
+        >
+          <img
+            src={it.url} alt="" loading="lazy"
+            onLoad={(e) => reportDim(it.name, { w: e.target.naturalWidth, h: e.target.naturalHeight })}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          />
+        </div>
+      ))}
+    </div>
+  )
 }
 
 const S = {
@@ -236,7 +285,7 @@ export default function SuiteGenerator({ brand, account }) {
   const [showImagePicker, setShowImagePicker] = useState(false)
   const [pickerBuckets, setPickerBuckets] = useState([])   // [{key, label, images:[{name,url}]}]
   const [pickerLoading, setPickerLoading] = useState(false)
-  const [pickerActive, setPickerActive] = useState('synthesized')
+  const [pickerActive, setPickerActive] = useState('gen')
 
   const [sid, setSid] = useState(saved?.sid || '')
   const [state, setState] = useState(saved?.state || null)
@@ -304,6 +353,19 @@ export default function SuiteGenerator({ brand, account }) {
     return () => { if (es) es.close() }
   }, [sid, phase, state?.running])
 
+  // 轮询兜底：SSE 中断后不会自动重连（浏览器/网络抖动、后端重启都会断），
+  // 一旦断开状态就永远停在旧快照 —— 表现就是「已生成的图片出不来」。
+  // 这里在生成期间每 3s 拉一次状态，保证进度与成品图实时可见。
+  useEffect(() => {
+    if (!sid) return
+    const busy = phase === 'generating' || state?.running
+    if (!busy) return
+    const t = setInterval(() => {
+      api.suiteStatus(sid).then(s => setState(s)).catch(() => {})
+    }, 3000)
+    return () => clearInterval(t)
+  }, [sid, phase, state?.running])
+
   // 聊天自动滚动到底
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
@@ -362,33 +424,41 @@ export default function SuiteGenerator({ brand, account }) {
     setShowImagePicker(true)
     setPickerLoading(true)
     try {
-      const buckets = [
-        { key: 'template_results', label: '模版图' },
-        { key: 'synthesized',       label: '合成图' },
-        { key: 'mains',             label: '主图素材' },
-        { key: 'cats',              label: '猫咪素材' },
+      // 分类与「图库」页保持一致：synthesized 桶按文件名前缀拆成
+      // 合成图(gen_) / 分镜图(frame_) / 套图(suite_) / 其他生成图(img_)，
+      // 否则所有生成图都挤在一个 tab 里。并发请求，弹窗打开更快。
+      const [synthRes, tplRes, mainsRes, catsRes] = await Promise.all([
+        api.images('synthesized', { brand }).catch(() => null),
+        api.images('template_results', { brand }).catch(() => null),
+        api.images('mains', { brand }).catch(() => null),
+        api.images('cats', { brand }).catch(() => null),
+      ])
+      const synthAll = synthRes?.images || []
+      // relUrl 是后端可解析的相对路径（/api/image/{category}/{name}?brand=..&account=..），
+      // 作为 ref_image 传给后端时会被归一化成本地文件 data URL（零网络依赖）。
+      // url 仅用于前端缩略图预览（前端 origin 绝对地址）。
+      const toImgs = (bucket, items) => (items || []).map(im => {
+        // url    = 仅用于弹窗内缩略图显示 → 走后端 ?w= 缩略图接口（Pillow 生成 + 长期缓存），
+        //          避免一次请求上百张原图（每张 ~1.5MB）把带宽打满、图片迟迟出不来。
+        // relUrl = 选中后传给后端的原图相对路径（后端会归一化成 data URL，需保持原始分辨率）。
+        const thumb = api.thumbUrl(bucket, im.name, 480, { brand })
+        const rel = api.imageUrl(bucket, im.name, { brand })
+        return { name: im.name, url: absUrl(thumb), relUrl: rel }
+      })
+      const pickSynth = (re) => toImgs('synthesized', synthAll.filter(im => re.test(im.name || '')))
+      const results = [
+        { key: 'gen',       label: '合成图',     images: pickSynth(/^gen_/i) },
+        { key: 'frame',     label: '分镜图',     images: pickSynth(/^frame_/i) },
+        { key: 'templates', label: '模版图',     images: toImgs('template_results', tplRes?.images) },
+        { key: 'suite',     label: '套图',       images: pickSynth(/^suite_/i) },
+        { key: 'other',     label: '其他生成图', images: pickSynth(/^img_/i) },
+        { key: 'mains',     label: '主图素材',   images: toImgs('mains', mainsRes?.images) },
+        { key: 'cats',      label: '猫咪素材',   images: toImgs('cats', catsRes?.images) },
       ]
-      const results = []
-      for (const b of buckets) {
-        try {
-          const r = await api.images(b.key, { brand }).catch(() => null)
-          const images = (r?.images || []).map(im => {
-            // relUrl 是后端可解析的相对路径（/api/image/{category}/{name}?brand=..&account=..），
-            // 作为 ref_image 传给后端时会被归一化成本地文件 data URL（零网络依赖）。
-            // url 仅用于前端缩略图预览（前端 origin 绝对地址）。
-            const rel = api.imageUrl(b.key, im.name, { brand })
-            return { name: im.name, url: absUrl(rel), relUrl: rel }
-          })
-          results.push({ ...b, images })
-        } catch {
-          results.push({ ...b, images: [] })
-        }
-      }
       setPickerBuckets(results)
-      // 默认优先选中「合成图」；若为空则回退到第一个有图片的分类
-      const synth = results.find(b => b.key === 'synthesized')
+      // 默认选中第一个有图片的分类（合成图优先，为空则自动回退）
       const firstWithImages = results.find(b => b.images.length > 0)
-      setPickerActive((synth && synth.images.length > 0) ? 'synthesized' : (firstWithImages ? firstWithImages.key : 'mains'))
+      setPickerActive(firstWithImages ? firstWithImages.key : 'gen')
     } finally {
       setPickerLoading(false)
     }
@@ -444,7 +514,8 @@ export default function SuiteGenerator({ brand, account }) {
 
   const onGenerate = () => {
     if (!checked.length) { setError('请至少勾选一张图'); return }
-    doAction('select', { type_ids: checked })
+    // 去重后提交：重复 type_id 会导致重复项永远停在「等待中」
+    doAction('select', { type_ids: Array.from(new Set(checked)) })
   }
 
   // 找到最后一张 confirm / select 卡片（只有最新的卡片可交互）
@@ -778,6 +849,7 @@ export default function SuiteGenerator({ brand, account }) {
 
               <div style={{
                 display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12,
+                alignItems: 'start',
               }}>
                 {images.map((it) => {
                   const meta = STATUS_META[it.status] || STATUS_META.pending
@@ -791,13 +863,14 @@ export default function SuiteGenerator({ brand, account }) {
                         position: 'relative',
                         background: 'var(--surface-tertiary)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-                        aspectRatio: '1 / 1',  // 始终和图片同尺寸 1:1 方框
+                        // 宽度固定为卡片宽度；已完成时高度由图片真实比例决定（不裁切）
+                        ...((it.status === 'done' && it.url) ? null : { aspectRatio: '1 / 1' }),
                       }}>
                         {it.status === 'done' && it.url ? (
                           <img
                             src={imgSrc(it.url)}
                             alt={it.title}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            style={{ width: '100%', height: 'auto', display: 'block' }}
                           />
                         ) : it.status === 'fail' ? (
                           <div style={{ padding: 10, fontSize: 11.5, color: 'var(--danger)', textAlign: 'center' }}>
@@ -893,14 +966,7 @@ export default function SuiteGenerator({ brand, account }) {
                   return imgs.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted-foreground)' }}>该图库暂无图片</div>
                   ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 12 }}>
-                      {imgs.map(im => (
-                        <div key={im.name} onClick={() => onPickerSelect(im)} style={{ cursor: 'pointer', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface-bg-2)' }} title={im.name}>
-                          <img src={im.url} alt={im.name} style={{ width: '100%', height: 'auto', objectFit: 'contain', display: 'block' }} />
-                          <div style={{ padding: '6px 8px', fontSize: 10, color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{im.name}</div>
-                        </div>
-                      ))}
-                    </div>
+                    <PickerGrid imgs={imgs} onSelect={onPickerSelect} />
                   )
                 })()}
               </div>
