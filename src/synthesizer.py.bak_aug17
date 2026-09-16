@@ -975,22 +975,10 @@ class NanoBananaSynthesizer(Synthesizer):
         raise last_err
 
     def _build_prompt(self, prompt: str, width: Optional[int], height: Optional[int]) -> str:
-        """只补一个语言中立的风格后缀 —— 画幅/构图一个字都不写。
-
-        ★ 为什么这里绝不能写画幅或构图要求（改前必读）★
-        1) **不许和 aspectRatio 打架**：画幅由 payload 里的 aspectRatio 权威决定，它由调用方传入的
-           width/height 算出（见 _ratio_for）。提示词里再复述一遍「正方形/横版/竖版构图」，
-           等于给模型两套互相矛盾的指令 —— 模型随机听一边，实测同一套图里混出
-           2172×2896 / 2048×3072 / 2508×2508 三种画幅，上架时尺寸对不齐。
-        2) **不许写中文**：这段会原样进生图模型，而模型会把提示词里的中文当成「图上要写的文字」
-           直接画出来。老代码写死「正方形构图 / 电商主图风格」，俄语、英语会话同样会收到这串中文，
-           属于和图标标签变中文同一类的事故。画幅的语言化表达由业务层按会话语言负责
-           （见 app.py 的 SUITE_STYLE_I18N['ratio']），引擎层保持语言中立。
-        3) 调用方要什么尺寸就传什么 width/height，其余一律不干预。
-        """
         w = width or self.width
         h = height or self.height
-        return f"{prompt} | {w}x{h}, e-commerce product photo, high detail"
+        size_hint = f" | 输出尺寸 {w}x{h}px, 正方形构图, 电商主图风格, 高细节"
+        return f"{prompt}{size_hint}"
 
     @staticmethod
     def _image_to_data_url(image_path: Path, max_side: int) -> Optional[str]:

@@ -36,6 +36,7 @@ const SIZES = [
 
 const STATUS_META = {
   pending:    { text: '等待中',   color: 'var(--muted-foreground)' },
+  queued:     { text: '排队中…', color: 'var(--muted-foreground)' },
   generating: { text: '生成中…', color: 'var(--warning)' },
   done:       { text: '已完成',   color: '#22c55e' },
   fail:       { text: '失败',     color: 'var(--danger)' },
@@ -148,6 +149,30 @@ function parseTranslation(text) {
     return { text: text.slice(0, m.index).trim(), translation: m[1].trim() }
   }
   return { text, translation: '' }
+}
+
+// —— 双语字段读取工具（重要：别退回只用 parseTranslation）——
+// 后端现在把每条文案拆成两个字段： title/concept = 目标语言正文（可直接进提示词），
+// title_zh/concept_zh = 中文（只供界面阅读，绝不进提示词）。
+// 但老会话（改动前存的 JSON）里中文还内联在正文尾巴上（【中文翻译】xxx），
+// 所以这两个函数同时兼容「新字段」与「老的内联标记」两种来源，避免老会话显示成空白。
+function zhOf(obj, key) {
+  if (!obj) return ''
+  const explicit = (obj[key + '_zh'] || '').trim()
+  if (explicit) return explicit
+  return parseTranslation(obj[key] || '').translation || ''
+}
+
+function langTextOf(obj, key) {
+  if (!obj) return ''
+  return parseTranslation(obj[key] || '').text
+}
+
+// 「改文案」编辑框的基线文本：非中文会话优先用中文，
+// 让用户始终用中文改文案（生成时后端会自动翻译成目标语言），而不是被迫改俄语/英语。
+function planBaseText(plan, language) {
+  const zh = zhOf(plan, 'concept')
+  return (language !== 'zh' && zh) ? zh : langTextOf(plan, 'concept')
 }
 
 /** 翻译显示块（灰色小字，附在原文下方） */
@@ -297,6 +322,14 @@ export default function SuiteGenerator({ brand, account }) {
   const [cancelMode, setCancelMode] = useState(saved?.cancelMode || false)
   const [cancelExtra, setCancelExtra] = useState(saved?.cancelExtra || '')
 
+  // —— 文案修改 / 重生成相关状态 ——
+  const [planOverrides, setPlanOverrides] = useState({})  // type_id -> 修改后的文案(concept)
+  const [editPlanId, setEditPlanId] = useState(null)       // 正在编辑文案的 type_id
+  const [editImg, setEditImg] = useState(null)             // 正在「修改提示词重生成」的图片对象
+  const [editText, setEditText] = useState('')             // 悬浮输入框中的提示词（中文）
+  const [editLoading, setEditLoading] = useState(false)    // 正在把原提示词回译成中文
+  const [streaming, setStreaming] = useState(false)        // SSE 流式开关（含重新生成）
+
   const fileRef = useRef(null)
   const chatRef = useRef(null)
   const restoredRef = useRef(!!saved)  // 标记本次挂载是否从 localStorage 恢复
@@ -335,36 +368,26 @@ export default function SuiteGenerator({ brand, account }) {
   const phase = state?.phase || ''
   const chat = state?.chat || []
 
-  // 生成中/等待中时流式推送状态（SSE）
+  // 流式推送状态（SSE）：在「开启会话 / 确认 / 取消重填 / 勾选生成 / 重新生成」期间开启，
+  // 完成后由 onComplete 关闭。用独立 streaming 开关，保证「重新生成」也能实时拿到进度。
   useEffect(() => {
-    if (!sid) return
-    let es = null
-    const needStream = phase === 'generating' || state?.running
-    if (needStream) {
-      es = api.suiteStream(sid, (data) => {
-        setState(data)
-      }, (err) => {
-        console.error('suite stream error', err)
-        setError(`流式连接出错：${err}`)
-      }, () => {
-        // 完成后自动关闭
-      })
-    }
-    return () => { if (es) es.close() }
-  }, [sid, phase, state?.running])
+    if (!sid || !streaming) return
+    const es = api.suiteStream(sid,
+      (data) => setState(data),
+      (err) => { console.error('suite stream error', err) },
+      () => setStreaming(false),
+    )
+    return () => es.close()
+  }, [sid, streaming])
 
-  // 轮询兜底：SSE 中断后不会自动重连（浏览器/网络抖动、后端重启都会断），
-  // 一旦断开状态就永远停在旧快照 —— 表现就是「已生成的图片出不来」。
-  // 这里在生成期间每 3s 拉一次状态，保证进度与成品图实时可见。
+  // 轮询兜底：SSE 中断时仍能追上进度（同样跟随 streaming 开关）
   useEffect(() => {
-    if (!sid) return
-    const busy = phase === 'generating' || state?.running
-    if (!busy) return
+    if (!sid || !streaming) return
     const t = setInterval(() => {
       api.suiteStatus(sid).then(s => setState(s)).catch(() => {})
     }, 3000)
     return () => clearInterval(t)
-  }, [sid, phase, state?.running])
+  }, [sid, streaming])
 
   // 聊天自动滚动到底
   useEffect(() => {
@@ -488,6 +511,7 @@ export default function SuiteGenerator({ brand, account }) {
         ref_image: refPath || null,
       })
       setSid(s.sid); setState(s); setChecked([]); setCancelMode(false); setCancelExtra('')
+      setStreaming(true)  // 开启 SSE 实时推送（豆包补全商品信息阶段）
     } catch (e) {
       setError(`开始失败：${e.message || e}`)
     } finally { setBusy(false); setStarting(false) }
@@ -500,6 +524,8 @@ export default function SuiteGenerator({ brand, account }) {
       const s = await api.suiteAction({ sid, action, ...extra })
       setState(s)
       setCancelMode(false); setCancelExtra('')
+      // 这些动作会触发后台 Agent / 生图，需要开启实时推送
+      if (action === 'confirm' || action === 'cancel' || action === 'select') setStreaming(true)
     } catch (e) {
       setError(`操作失败：${e.message || e}`)
     } finally { setBusy(false) }
@@ -514,8 +540,67 @@ export default function SuiteGenerator({ brand, account }) {
 
   const onGenerate = () => {
     if (!checked.length) { setError('请至少勾选一张图'); return }
+    // 仅提交「真正改过」的文案：与原始 concept 相同（含仅打开看一眼就关闭）的卡片不传，
+    // 回落豆包原流程；改过的卡片走「直接用修改后文案生图」分支。
+    const overrides = {}
+    for (const id of checked) {
+      const ov = planOverrides[id]
+      if (ov == null) continue
+      const plan = (state?.plan || []).find(p => p.type_id === id)
+      const conceptText = plan ? planBaseText(plan, language) : ''
+      if (ov !== conceptText) overrides[id] = ov
+    }
     // 去重后提交：重复 type_id 会导致重复项永远停在「等待中」
-    doAction('select', { type_ids: Array.from(new Set(checked)) })
+    doAction('select', { type_ids: Array.from(new Set(checked)), plan_overrides: overrides })
+  }
+
+  const langLabel = LANGS.find(l => l.key === language)?.label || language
+
+  // 图片右下角圆形操作按钮（重新生成 / 修改提示词）
+  const ICON_BTN = {
+    width: 30, height: 30, borderRadius: '50%',
+    background: 'rgba(0,0,0,.55)', color: '#fff',
+    border: '1px solid rgba(255,255,255,.28)', cursor: 'pointer',
+    display: 'grid', placeItems: 'center', flexShrink: 0,
+  }
+
+  // —— 重新生成（沿用原提示词）——
+  const doRegen = (type_id) => {
+    if (!sid) return
+    setError('')
+    api.suiteAction({ sid, action: 'regen', type_id })
+      .then(s => { setState(s); setStreaming(true) })
+      .catch(e => setError(`重新生成失败：${e.message || e}`))
+  }
+
+  // —— 修改提示词后重新生成 ——
+  // 编辑框里永远是「中文」：后端会保存 prompt_zh（提示词的中文版），
+  // 老的/豆包直出的图只有目标语言版本，打开时按需回译一次（zh_prompt）。
+  const openPromptEditor = (it) => {
+    setEditText(it.prompt_zh || '')
+    setEditLoading(false)
+    setEditImg(it)
+    if (!(it.prompt_zh || '').trim() && (it.prompt || '').trim()) {
+      setEditLoading(true)
+      api.suiteAction({ sid, action: 'zh_prompt', type_id: it.type_id })
+        .then(s => {
+          setState(s)
+          const rec = (s.images || []).find(x => x.type_id === it.type_id)
+          if (rec && rec.prompt_zh) setEditText(rec.prompt_zh)
+        })
+        .catch(() => {})
+        .finally(() => setEditLoading(false))
+    }
+  }
+  const doRegenWithPrompt = (type_id) => {
+    if (!sid) return
+    const text = (editText || '').trim()
+    if (!text) { setError('提示词不能为空'); return }
+    setError('')
+    setEditImg(null)
+    api.suiteAction({ sid, action: 'regen_with_prompt', type_id, prompt: text })
+      .then(s => { setState(s); setStreaming(true) })
+      .catch(e => setError(`重新生成失败：${e.message || e}`))
   }
 
   // 找到最后一张 confirm / select 卡片（只有最新的卡片可交互）
@@ -722,38 +807,71 @@ export default function SuiteGenerator({ brand, account }) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
                     {plan.map(it => {
                       const on = checked.includes(it.type_id)
+                      const editing = editPlanId === it.type_id
+                      const ov = planOverrides[it.type_id]
+                      const conceptText = langTextOf(it, 'concept')
+                      const conceptZh = zhOf(it, 'concept')
+                      const baseVal = ov != null ? ov : planBaseText(it, language)
                       return (
                         <div key={it.type_id} style={{
-                          display: 'flex', gap: 8, alignItems: 'flex-start', cursor: active ? 'pointer' : 'default',
+                          display: 'flex', flexDirection: 'column', gap: 4,
                           background: on ? 'var(--surface-tertiary)' : 'transparent',
                           border: `1px solid ${on ? 'var(--success)' : 'var(--border)'}`,
                           borderRadius: 'var(--radius-lg)', padding: '7px 9px',
                         }}>
-                          <HeroCheckbox
-                            isSelected={on}
-                            onChange={() => toggleCheck(it.type_id)}
-                            isDisabled={!active}
-                            aria-label={it.title}
-                            className="mt-0.5"
-                          >
-                            <HeroCheckbox.Content>
-                              <HeroCheckbox.Control>
-                                <HeroCheckbox.Indicator />
-                              </HeroCheckbox.Control>
-                              <span style={{ fontSize: 12.5, lineHeight: 1.6 }}>
-                                {(() => {
-                                  const { text: t, translation: tZh } = parseTranslation(it.title || '')
-                                  return <><b>{t}</b>{tZh && <TranslationBlock text={tZh} />}</>
-                                })()}
-                                {it.concept ? (
-                                  (() => {
-                                    const { text: c, translation: cZh } = parseTranslation(it.concept)
-                                    return <><span style={{ color: 'var(--muted-foreground)' }}> — {c}</span>{cZh && <TranslationBlock text={cZh} />}</>
-                                  })()
-                                ) : null}
-                              </span>
-                            </HeroCheckbox.Content>
-                          </HeroCheckbox>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: active ? 'pointer' : 'default' }}>
+                            <HeroCheckbox
+                              isSelected={on}
+                              onChange={() => toggleCheck(it.type_id)}
+                              isDisabled={!active}
+                              aria-label={it.title}
+                              className="mt-0.5"
+                            >
+                              <HeroCheckbox.Content>
+                                <HeroCheckbox.Control>
+                                  <HeroCheckbox.Indicator />
+                                </HeroCheckbox.Control>
+                                <span style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                                  <b>{langTextOf(it, 'title')}</b>
+                                  {zhOf(it, 'title') && <TranslationBlock text={zhOf(it, 'title')} />}
+                                  {conceptText ? (
+                                    <>
+                                      <span style={{ color: 'var(--muted-foreground)' }}> — {conceptText}</span>
+                                      {conceptZh && <TranslationBlock text={conceptZh} />}
+                                    </>
+                                  ) : null}
+                                </span>
+                              </HeroCheckbox.Content>
+                            </HeroCheckbox>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setEditPlanId(editing ? null : it.type_id)
+                                if (!editing) setPlanOverrides(p => ({ ...p, [it.type_id]: baseVal }))
+                              }}
+                              title="修改文案（将直接作为生图提示词；生成时中文会自动翻译）"
+                              style={{
+                                marginLeft: 'auto', flexShrink: 0, alignSelf: 'flex-start',
+                                background: 'transparent', border: 'none', cursor: 'pointer',
+                                color: editing ? 'var(--accent)' : 'var(--muted-foreground)',
+                                display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11.5, padding: '2px 4px',
+                              }}
+                            >
+                              <Icon name="edit" size={12} /> 改文案
+                            </button>
+                          </div>
+                          {editing && (
+                            <div>
+                              <HeroTextArea
+                                value={baseVal}
+                                onChange={(v) => setPlanOverrides(p => ({ ...p, [it.type_id]: v }))}
+                                minRows={3}
+                                className="w-full"
+                                placeholder={language !== 'zh' ? `可输入中文，生成时自动翻译为 ${langLabel}` : '可直接修改该图的文案'}
+                              />
+                              {conceptZh && ov == null && <TranslationBlock text={conceptZh} />}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
@@ -863,14 +981,20 @@ export default function SuiteGenerator({ brand, account }) {
                         position: 'relative',
                         background: 'var(--surface-tertiary)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-                        // 宽度固定为卡片宽度；已完成时高度由图片真实比例决定（不裁切）
-                        ...((it.status === 'done' && it.url) ? null : { aspectRatio: '1 / 1' }),
+                        // 宽度固定为卡片宽度；有图时高度由图片真实比例决定（不裁切）
+                        ...((it.url && it.status !== 'fail') ? null : { aspectRatio: '1 / 1' }),
                       }}>
-                        {it.status === 'done' && it.url ? (
+                        {/* 有旧图就先显示旧图：重新生成排队/生成中时用它垫着，
+                            避免用户一点按钮卡片就突然变空白（看起来像丢了图） */}
+                        {it.url && it.status !== 'fail' ? (
                           <img
                             src={imgSrc(it.url)}
                             alt={it.title}
-                            style={{ width: '100%', height: 'auto', display: 'block' }}
+                            style={{
+                              width: '100%', height: 'auto', display: 'block',
+                              opacity: (it.status === 'generating' || it.status === 'queued') ? 0.4 : 1,
+                              transition: 'opacity .2s',
+                            }}
                           />
                         ) : it.status === 'fail' ? (
                           <div style={{ padding: 10, fontSize: 11.5, color: 'var(--danger)', textAlign: 'center' }}>
@@ -909,11 +1033,68 @@ export default function SuiteGenerator({ brand, account }) {
                           </div>
                         )}
                         <Chip size="sm" className="absolute right-1.5 top-1.5" style={{ background: 'rgba(0,0,0,.65)', color: meta.color }}>{meta.text}</Chip>
+
+                        {/* 已生成图片：右下角两个 icon —— 重新生成 / 修改提示词重新生成 */}
+                        {it.status === 'done' && (
+                          <div style={{ position: 'absolute', right: 8, bottom: 8, display: 'flex', gap: 6, zIndex: 6 }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); doRegen(it.type_id) }}
+                              title="重新生成（沿用当前提示词）"
+                              style={ICON_BTN}
+                            ><Icon name="refresh" size={14} /></button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openPromptEditor(it) }}
+                              title="修改提示词后重新生成"
+                              style={ICON_BTN}
+                            ><Icon name="edit" size={14} /></button>
+                          </div>
+                        )}
+
+                        {/* 悬浮输入框：修改提示词后重新生成 —— 输入用中文，后端自动翻译成目标语言 */}
+                        {it.status === 'done' && editImg && editImg.type_id === it.type_id && (
+                          <div style={{
+                            position: 'absolute', right: 8, bottom: 8, width: 286, zIndex: 30,
+                            background: 'var(--surface-bg-2)', border: '1px solid var(--border)',
+                            borderRadius: 12, padding: 10, boxShadow: '0 10px 34px rgba(0,0,0,.4)',
+                          }}>
+                            <div style={{ fontSize: 11.5, color: 'var(--muted-foreground)', marginBottom: 6, lineHeight: 1.5 }}>
+                              用中文写你想要的画面{language !== 'zh' ? `，会自动翻译成 ${langLabel}` : ''}
+                            </div>
+                            <HeroTextArea
+                              value={editText}
+                              onChange={setEditText}
+                              minRows={4}
+                              className="w-full mb-2"
+                              placeholder={editLoading
+                                ? '正在把原提示词翻译成中文…'
+                                : '例如：暖色卧室，猫咪侧躺在被子一侧回头看镜头，45 度斜俯拍'}
+                            />
+                            {language !== 'zh' && (it.prompt || '').trim() && (
+                              <div style={{
+                                fontSize: 10.5, color: 'var(--muted-foreground)', marginBottom: 8,
+                                maxHeight: 48, overflowY: 'auto', lineHeight: 1.5,
+                                background: 'var(--surface-tertiary)', borderRadius: 8, padding: '5px 7px',
+                              }}>
+                                当前提示词（{langLabel}）：{it.prompt}
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                              <HeroButton variant="outline" size="sm" onPress={() => setEditImg(null)}>取消</HeroButton>
+                              <HeroButton color="primary" size="sm" isDisabled={editLoading} onPress={() => doRegenWithPrompt(it.type_id)}>开始生成</HeroButton>
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <div style={{ padding: '8px 10px' }}>
                         <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--foreground)', marginBottom: 2 }}>
-                          {it.title}
+                          {langTextOf(it, 'title') || it.type_id}
                         </div>
+                        {/* 中文只做灰色附注，不进图片、不进提示词 */}
+                        {zhOf(it, 'title') && zhOf(it, 'title') !== langTextOf(it, 'title') && (
+                          <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 2, lineHeight: 1.5 }}>
+                            {zhOf(it, 'title')}
+                          </div>
+                        )}
                         {it.credits != null && (
                           <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
                             消耗积分 {it.credits}

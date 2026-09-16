@@ -24,3 +24,9 @@
 - 仓库2（app.remote.py，ymhy-server-backup）：有改动（1 文件 6 行新增），本地 commit faf9fc0 "backup 2026-09-14"，push 仍被 GitHub Push Protection 拒绝（rule violations），同一历史提交 0779abf：腾讯云 Secret ID（_cos_probe.py:4、_write_env.py:20）、DeepSeek API Key（app.py:160、app.py.bak_cos:160）、VolcEngine Ark API Key（app.py:165、app.py.bak_cos:165）。按约定未绕过，本地保留 commit。
 - 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥。
 - 结果：仓库1 无改动；仓库2 有本地提交但推送失败（同一密钥拦截）。
+
+## 2026-09-16 03:00
+- 仓库1（前端+引擎，ymhy-server）：有改动（10 文件，+299/-178，新增 web/app/src/masonry.js），commit 3a5d7b5 "backup 2026-09-16"，push 成功（63b902f..3a5d7b5）。
+- 仓库2（app.remote.py，ymhy-server-backup）：有改动（1 文件 3 增 3 删），本地 commit 6963343 "backup 2026-09-16"，push 仍被 GitHub Push Protection 拒绝（rule violations），同一历史提交 0779abf：腾讯云 Secret ID（_cos_probe.py:4、_write_env.py:20）、DeepSeek API Key（app.py:160、app.py.bak_cos:160）、VolcEngine Ark API Key（app.py:165、app.py.bak_cos:165）。按约定未绕过，本地保留 commit。
+- 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥。
+- 结果：仓库1 有提交并推送；仓库2 有本地提交但推送失败（同一密钥拦截）。
