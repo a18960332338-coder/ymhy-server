@@ -5,6 +5,9 @@ import brandLogo from '../assets/brand-logo.png'
 import { getBrandAI } from '../presets'
 import { aiSessionsKey, aiPresetKey } from '../accountKeys'
 import {
+  loadGalleryCategories, mapCategoryImages, defaultCategoryKey, DEFAULT_GALLERY_CATEGORY,
+} from '../galleryCategories'
+import {
   Button as HeroButton, Chip, Avatar, Modal, Spinner,
   ToggleButton, ToggleButtonGroup,
 } from '@heroui/react'
@@ -291,7 +294,7 @@ export default function AiChat({ brand, account }) {
   const [showImagePicker, setShowImagePicker] = useState(false)
   const [pickerLoading, setPickerLoading] = useState(false)
   const [pickerBuckets, setPickerBuckets] = useState([])
-  const [pickerTab, setPickerTab] = useState('mains')
+  const [pickerTab, setPickerTab] = useState(DEFAULT_GALLERY_CATEGORY)
 
   // 粘贴图片：window 级监听，粘贴到输入框即可附带图片
   useEffect(() => {
@@ -337,25 +340,15 @@ export default function AiChat({ brand, account }) {
     setShowImagePicker(true)
     setPickerLoading(true)
     try {
-      const buckets = [
-        { key: 'mains', label: '主图素材库' },
-        { key: 'cats', label: '猫咪素材库' },
-        { key: 'synthesized', label: '图库' },
-      ]
-      const results = []
-      for (const b of buckets) {
-        try {
-          const r = await api.images(b.key, { brand }).catch(() => null)
-          const images = (r?.images || []).map(im => ({
-            name: im.name,
-            url: api.imageUrl(b.key, im.name, { brand }),
-          }))
-          results.push({ ...b, images })
-        } catch {
-          results.push({ ...b, images: [] })
-        }
-      }
-      setPickerBuckets(results)
+      // 分类统一来自 src/galleryCategories.js，与「图库」页 Tab 保持一致
+      // （历史上这里写的是「主图素材库 / 猫咪素材库 / 图库」三项，其中「图库」
+      //   把合成图/分镜图/套图/其他生成图全混在一起，和图库页对不上）
+      const cats = mapCategoryImages(await loadGalleryCategories(brand), (bucket, im) => ({
+        name: im.name,
+        url: api.imageUrl(bucket, im.name, { brand }),
+      }))
+      setPickerBuckets(cats)
+      setPickerTab(defaultCategoryKey(cats))
     } finally {
       setPickerLoading(false)
     }

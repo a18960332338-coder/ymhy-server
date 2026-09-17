@@ -18,6 +18,38 @@ const STATUS = {
 const VIDEO_EXT_RE = /\.(mp4|mov|webm|mkv|avi|flv|m4v|mpg|mpeg)$/i
 const IMG_EXT_RE = /\.(jpg|jpeg|png|webp|bmp|gif)$/i
 
+// 按 MIME 推断扩展名。
+// 为什么必须补：**粘贴（⌘V）进来的文件经常没有文件名**（或只有 "video" 这种无扩展名的名字），
+// 而后端上传接口是「按扩展名分流存储」的 —— 没有扩展名会被它兜底成 .png 存进图片桶，
+// 视频库里永远看不到这个文件。所以前端必须先把文件名补齐再上传。
+const MIME_EXT = {
+  'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm',
+  'video/x-matroska': '.mkv', 'video/x-msvideo': '.avi', 'video/x-m4v': '.m4v',
+  'video/mpeg': '.mpg', 'video/x-flv': '.flv',
+  'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp',
+  'image/bmp': '.bmp', 'image/gif': '.gif',
+}
+
+const isVideoFile = (f) => !!f && ((f.type || '').toLowerCase().startsWith('video/') || VIDEO_EXT_RE.test(f.name || ''))
+const isImageFile = (f) => !!f && ((f.type || '').toLowerCase().startsWith('image/') || IMG_EXT_RE.test(f.name || ''))
+
+// 给「没有扩展名」的文件补一个合法的文件名，并用 new File 重建（否则上传时 filename 还是空的，
+// 后端拿不到扩展名 → 又会存成 .png）。已经有扩展名的文件原样返回，不做任何改动。
+function normalizeFile(f) {
+  if (!f) return f
+  const rawName = f.name || ''
+  if (/\.[a-z0-9]{2,5}$/i.test(rawName)) return f
+  const type = (f.type || '').toLowerCase()
+  const ext = MIME_EXT[type] || (type.startsWith('video/') ? '.mp4' : type.startsWith('image/') ? '.png' : '')
+  if (!ext) return f
+  const stem = rawName.trim() || (type.startsWith('video/') ? 'pasted-video' : 'pasted-image')
+  try {
+    return new File([f], `${stem}_${Date.now()}${ext}`, { type: f.type || '' })
+  } catch (err) {
+    return f
+  }
+}
+
 const ASPECT_ICONS = {
   '21:9': '21:9',
   '16:9': '16:9',
@@ -326,6 +358,7 @@ export default function VideoReplicate({ brand, account }) {
 
   // 提示词
   const [prompt, setPrompt] = useState('')
+  const rootRef = useRef(null)   // 本页最外层容器，用于判断「本页当前是否可见」（见全局粘贴守卫）
 
   // 模型与参数
   const [models, setModels] = useState([])
@@ -433,9 +466,13 @@ export default function VideoReplicate({ brand, account }) {
 
   const addVideo = async (f) => {
     if (!f) return
-    if (!VIDEO_EXT_RE.test(f.name || '')) { Toast.warning('请上传视频文件（mp4/mov/webm 等）'); return }
+    // 只按「MIME 或扩展名」任一命中就放行。
+    // 老代码这里强制 `VIDEO_EXT_RE.test(f.name)` —— 从剪贴板粘贴的视频往往没有文件名/扩展名，
+    // 于是被静默拒绝（只弹一句 Toast），表现就是「粘贴视频进去不展示」。
+    if (!isVideoFile(f)) { Toast.warn('请上传视频文件（mp4/mov/webm 等）'); return }
+    const file = normalizeFile(f)
     if (video && video.preview.startsWith('blob:')) URL.revokeObjectURL(video.preview)
-    const ref = makeRef(f, 'video')
+    const ref = makeRef(file, 'video')
     setVideo(ref)
     setUploadBusy(true)
     const r = await uploadRefToServer(ref, 'videos')
@@ -445,18 +482,19 @@ export default function VideoReplicate({ brand, account }) {
       Toast.success('参考视频已上传')
     } else {
       setVideo({ ...ref, url: '', status: 'error' })
-      Toast.warning('视频上传失败：' + r.error)
+      Toast.warn('视频上传失败：' + r.error)
     }
   }
 
   const addImage = async (f) => {
     if (!f) return
-    if (!IMG_EXT_RE.test(f.name || '')) { Toast.warning('请上传图片文件（jpg/png/webp 等）'); return }
-    const ref = makeRef(f, 'image')
+    if (!isImageFile(f)) { Toast.warn('请上传图片文件（jpg/png/webp 等）'); return }
+    const file = normalizeFile(f)
+    const ref = makeRef(file, 'image')
     setImages((prev) => [...prev, ref])
     const r = await uploadRefToServer(ref, 'cats')
     setImages((prev) => prev.map((item) => (item.id === ref.id ? { ...item, url: r.url || '', status: r.ok ? 'done' : 'error' } : item)))
-    if (!r.ok) Toast.warning(`图片 ${ref.name}${ref.ext} 上传失败：${r.error}`)
+    if (!r.ok) Toast.warn(`图片 ${ref.name}${ref.ext} 上传失败：${r.error}`)
   }
 
   const removeVideo = () => {
@@ -473,14 +511,13 @@ export default function VideoReplicate({ brand, account }) {
   const routeFiles = (files) => {
     if (!files || !files.length) return
     for (const f of Array.from(files)) {
-      const name = f.name || ''
-      const type = f.type || ''
-      if (type.startsWith('video/') || VIDEO_EXT_RE.test(name)) {
+      // 先按 MIME 判类型（粘贴进来的文件常常没有文件名，靠扩展名会误判成"不支持的类型"）
+      if (isVideoFile(f)) {
         addVideo(f)
-      } else if (type.startsWith('image/') || IMG_EXT_RE.test(name)) {
+      } else if (isImageFile(f)) {
         addImage(f)
       } else {
-        Toast.warning('不支持的文件类型：' + (f.name || ''))
+        Toast.warn('不支持的文件类型：' + (f.name || f.type || '未知'))
       }
     }
   }
@@ -502,9 +539,9 @@ export default function VideoReplicate({ brand, account }) {
   const genId = () => `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
   const startGenerate = async () => {
-    if (!video || !video.url) { Toast.warning('请先上传需要复刻的视频'); return }
-    if (!prompt.trim()) { Toast.warning('请填写提示词'); return }
-    if (!modelId) { Toast.warning('请选择视频模型'); return }
+    if (!video || !video.url) { Toast.warn('请先上传需要复刻的视频'); return }
+    if (!prompt.trim()) { Toast.warn('请填写提示词'); return }
+    if (!modelId) { Toast.warn('请选择视频模型'); return }
 
     const imageUrls = images.filter((i) => i.url).map((i) => i.url)
     const params = {
@@ -651,6 +688,31 @@ export default function VideoReplicate({ brand, account }) {
     e.preventDefault()
   }
 
+  // ★ 粘贴必须挂在 document 上，不能只挂容器 ★
+  // 老代码把 onPaste 挂在页面最外层 div 上，而那个 div 不可聚焦：用户点一下空白处
+  // （或点左侧那个虚线「参考内容」框 —— 它会弹文件选择框）之后焦点落回 body，
+  // 此时 ⌘V 的 paste 事件根本不会经过容器，表现就是「粘贴进去没反应/不展示」。
+  // 挂到 document 上全页生效；因为只有剪贴板里真的含文件时才 preventDefault，
+  // 往提示词输入框里粘贴纯文本完全不受影响。
+  //
+  // ⚠️ 但必须加「本页可见」守卫：App 里五个大页面是**常驻挂载**的（切 tab 只 display:none
+  // 不卸载，用来保活后台任务），不加守卫的话在别的页面粘贴图片也会被本页抢走。
+  // 隐藏时元素没有渲染盒，getClientRects() 长度为 0，用它判断最稳。
+  const isPageVisible = () => {
+    const el = rootRef.current
+    return !!el && el.getClientRects().length > 0
+  }
+  const onPasteRef = useRef(onPaste)
+  onPasteRef.current = onPaste
+  useEffect(() => {
+    const handler = (e) => {
+      if (!isPageVisible()) return
+      onPasteRef.current(e)
+    }
+    document.addEventListener('paste', handler)
+    return () => document.removeEventListener('paste', handler)
+  }, [])
+
   // 页面级拖拽：阻止浏览器默认“打开文件”行为；把文件分发到对应素材位
   const onContainerDragOver = (e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault() }
   const onContainerDrop = (e) => {
@@ -663,7 +725,7 @@ export default function VideoReplicate({ brand, account }) {
 
   return (
     <div
-      onPaste={onPaste}
+      ref={rootRef}
       onDragOver={onContainerDragOver}
       onDrop={onContainerDrop}
       style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '24px 28px', overflow: 'auto' }}

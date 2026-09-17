@@ -6,6 +6,11 @@ import bananaIcon from '../assets/banana-icon.png'
 import { TemplateResultLibrary } from './TemplateStudio'
 import { lastModelKey } from '../accountKeys'
 import { useImageDims, useContainerWidth, layoutMasonryRowMajor } from '../masonry'
+import { GALLERY_CATEGORIES, visibleGalleryCategories } from '../galleryCategories'
+
+// 图库分类的筛选正则统一取自 src/galleryCategories.js（图库页与所有
+// 「从图库选择」弹窗共用同一份定义，避免两边各写一套导致 Tab 对不上）
+const catRe = (key) => (GALLERY_CATEGORIES.find(c => c.key === key) || {}).match
 
 // === HeroUI v3 适配层 ====================================================
 // 把原来的「纯 HTML + 自定义 CSS」基础组件换成 HeroUI v3 组件，
@@ -447,7 +452,7 @@ function SimpleDropzone({ bucket, onUploaded, fileInputRef, busy, setBusy, trigg
       const saved = r.savedCount || 0
       const bucketLabel = bucket === BUCKET_MAIN ? '主图素材库' : bucket === BUCKET_CAT ? '猫咪素材库' : '素材库'
       if (saved > 0) Toast.success(`已上传 ${saved}/${r.total} 张图片到「${bucketLabel}」`)
-      else Toast.warning(`未成功保存任何图片`)
+      else Toast.warn(`未成功保存任何图片`)
       // 上传后立即刷新当前 dropzone 的列表：保证主图/猫咪上传后立即显示在素材库
       onUploaded && onUploaded(r)
       // 派发全局事件：若用户在猫咪素材库页（CatsGallery）或结果图库等，也能同步刷新
@@ -1365,7 +1370,7 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
 
   // NanoBanana 模型选择：读取 localStorage 记忆的上次模型
   const doSingle = async () => {
-    if (!previewMain || !previewCat) { Toast.warning('请至少选择 1 张主图 + 1 张猫咪图'); return }
+    if (!previewMain || !previewCat) { Toast.warn('请至少选择 1 张主图 + 1 张猫咪图'); return }
     setLoading(true); setProgress(5); setStageStatus('running'); setStageMessage('任务排队中…'); setPairs([])
     // ====== 假进度慢慢爬到 99% 就卡住，真实 success 回调（图片返回）直接冲 100% ======
     startFakeProgress(0.7, 1000, 99)
@@ -1475,7 +1480,7 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
   // ====== 用户期望的批量模式：只 Toast 提交结果，后台静默轮询，结束后再 Toast 完成 + 刷新【生成记录】======
   const doBatch = async () => {
     if (!selMains.length || !selCats.length) {
-      Toast.warning('请选择主图和猫咪图（支持多张批量）'); return
+      Toast.warn('请选择主图和猫咪图（支持多张批量）'); return
     }
     stopBatchPoll()
     // 注意：这里不 setLoading/setProgress/setStageStatus/setPairs
@@ -1504,7 +1509,7 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
             running = false
             const ok = st.ok || 0, fail = st.fail || 0, totalN = st.total || total
             const msg = `批量完成：成功 ${ok} · 失败 ${fail} · 共 ${totalN} 对`
-            if (fail > 0) Toast.warning(msg); else Toast.success(msg)
+            if (fail > 0) Toast.warn(msg); else Toast.success(msg)
             // 派发全局事件 → 结果图库和生成记录面板同步刷新
             window.dispatchEvent(new CustomEvent('tk:refresh-results'))
           } else {
@@ -2093,7 +2098,7 @@ function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon 
 
   const doExport = async () => {
     const names = items.filter(it => selected.has(it.name)).map(it => it.name)
-    if (!names.length) { Toast.warning('请先勾选要导出的图片'); return }
+    if (!names.length) { Toast.warn('请先勾选要导出的图片'); return }
     setExporting(true)
     try {
       // 本轮唯一批次戳（秒级），保证跨轮导出文件名不重复
@@ -2506,16 +2511,11 @@ function ResultsLibrary({ active = true, brand, buckets = {} }) {
 
   const recordList = recordSub === 'active' ? activeBatches : doneBatches
 
+  // 图库主页 Tab 与所有「从图库选择」弹窗共用同一份权威定义（galleryCategories.js），
+  // 避免两边各写一套导致 Tab 对不上。袜子品牌自动隐藏「猫咪素材」。
   const LIB_TABS = [
-    { k: TAB_ALL,   label: '全部' },
-    { k: TAB_SYNTH, label: '合成图' },
-    { k: TAB_FRAME, label: '分镜图' },
-    { k: TAB_TPL,   label: '模版图' },
-    { k: TAB_SUITE, label: '套图' },
-    { k: TAB_OTHER, label: '其他生成图' },
-    { k: TAB_MAINS, label: '主图素材' },
-    { k: TAB_CATS,  label: '猫咪素材' },
-    { k: TAB_LOG,   label: '生成记录' },
+    ...visibleGalleryCategories(brand).map(c => ({ k: c.key, label: c.label })),
+    { k: TAB_LOG, label: '生成记录' },
   ]
 
   return (
@@ -2890,9 +2890,9 @@ function Import1688Page({ brand, onSwitchTab }) {
 
   const handleParse = async () => {
     const raw = splitUrls(url)
-    if (!raw.length) { Toast.warning('请输入至少一条 1688 商品链接'); return }
+    if (!raw.length) { Toast.warn('请输入至少一条 1688 商品链接'); return }
     const invalid = raw.filter(u => !/1688\.com|alibaba\.com/i.test(u))
-    if (invalid.length === raw.length) { Toast.warning('请输入有效的 1688 或阿里巴巴商品链接'); return }
+    if (invalid.length === raw.length) { Toast.warn('请输入有效的 1688 或阿里巴巴商品链接'); return }
     const urls = invalid.length > 0 ? raw.filter(u => /1688\.com|alibaba\.com/i.test(u)) : raw
     setParsing(true); setResults([]); setSelected(new Set()); setSavedSet(new Set()); setSaving({})
     try {
@@ -2914,7 +2914,7 @@ function Import1688Page({ brand, onSwitchTab }) {
       if (fail === 0) {
         Toast.success(`解析完成：成功 ${ok} 个商品，共 ${imgTotal} 张主图（每个商品前 5 张）`)
       } else {
-        Toast.warning(`解析完成：成功 ${ok}，失败 ${fail}，共 ${imgTotal} 张主图（失败商品请单独重试）`)
+        Toast.warn(`解析完成：成功 ${ok}，失败 ${fail}，共 ${imgTotal} 张主图（失败商品请单独重试）`)
       }
     } catch (e) {
       Toast.error('解析失败: ' + e.message)
@@ -2928,7 +2928,7 @@ function Import1688Page({ brand, onSwitchTab }) {
   const handleReParse = async (pIdx) => {
     const prod = results[pIdx]
     const u = prod?.url
-    if (!u) { Toast.warning('该记录没有可重试的链接'); return }
+    if (!u) { Toast.warn('该记录没有可重试的链接'); return }
     setReParsing(prev => ({ ...prev, [pIdx]: true }))
     try {
       const one = await api.parse1688(u, brand)
@@ -2950,7 +2950,7 @@ function Import1688Page({ brand, onSwitchTab }) {
         })
       }
       if (ok) Toast.success(`已重新读取：${one.images.length} 张主图`)
-      else Toast.warning('重新读取仍无主图（可能被风控拦截，请稍后或先点「预热过码」再试）')
+      else Toast.warn('重新读取仍无主图（可能被风控拦截，请稍后或先点「预热过码」再试）')
     } catch (e) {
       Toast.error('重新读取失败: ' + e.message)
     } finally {
@@ -3037,7 +3037,7 @@ function Import1688Page({ brand, onSwitchTab }) {
   }
 
   const handleSaveBatch = async () => {
-    if (!selected.size) { Toast.warning('请先勾选要加入素材库的图片'); return }
+    if (!selected.size) { Toast.warn('请先勾选要加入素材库的图片'); return }
     // 从 results 里挑出被选中的条目，组装 items[{product_id, url, tmp_cache_name, index}]
     const items = []
     for (const p of results || []) {
@@ -3053,7 +3053,7 @@ function Import1688Page({ brand, onSwitchTab }) {
         }
       }
     }
-    if (!items.length) { Toast.warning('没有选中可保存的图片'); return }
+    if (!items.length) { Toast.warn('没有选中可保存的图片'); return }
     setBatchSaving(true)
     try {
       const r = await api.save1688Batch(items, brand)
@@ -3079,7 +3079,7 @@ function Import1688Page({ brand, onSwitchTab }) {
         return n
       })
       if (fail_count === 0) Toast.success(`批量加入完成：成功 ${saved_count} 张`)
-      else Toast.warning(`批量加入：成功 ${saved_count} 张，失败 ${fail_count} 张（失败项请重试或查看错误）`)
+      else Toast.warn(`批量加入：成功 ${saved_count} 张，失败 ${fail_count} 张（失败项请重试或查看错误）`)
       // 清掉已成功保存的选择项
       setSelected(new Set())
     } catch (e) {

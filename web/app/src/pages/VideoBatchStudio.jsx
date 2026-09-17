@@ -6,6 +6,9 @@ import bananaIcon from '../assets/banana-icon.png'
 import { STORYBOARD_PRESET, getBrandAI } from '../presets'
 import { vbsModelKey, accId } from '../accountKeys'
 import {
+  loadGalleryCategories, mapCategoryImages, defaultCategoryKey, DEFAULT_GALLERY_CATEGORY,
+} from '../galleryCategories'
+import {
   Button as HeroButton,
   Chip,
   Spinner,
@@ -382,8 +385,8 @@ function RefUploadZone({ image, onPick, onClear }) {
   const onFilesChosen = (files) => {
     const f = Array.from(files || [])[0]
     if (!f) return
-    if (!f.type?.startsWith('image/')) { Toast.warning('请上传图片文件'); return }
-    if (f.size > 10 * 1024 * 1024) { Toast.warning('图片不能超过 10MB'); return }
+    if (!f.type?.startsWith('image/')) { Toast.warn('请上传图片文件'); return }
+    if (f.size > 10 * 1024 * 1024) { Toast.warn('图片不能超过 10MB'); return }
     onPick && onPick(f)
   }
 
@@ -539,7 +542,7 @@ export default function VideoBatchStudio(props) {
   const [showImagePicker, setShowImagePicker] = useState(false)
   const [pickerBuckets, setPickerBuckets] = useState([]) // [{key, label, images:[{name,url}]}]
   const [pickerLoading, setPickerLoading] = useState(false)
-  const [pickerActive, setPickerActive] = useState('mains')
+  const [pickerActive, setPickerActive] = useState(DEFAULT_GALLERY_CATEGORY)
   const [pickerMode, setPickerMode] = useState('ref') // 'ref' | 'frame'
   const [pickerFrameIdx, setPickerFrameIdx] = useState(null) // 当 mode='frame' 时记录目标分镜 idx
   // 分镜文案 hover 完整展示
@@ -599,7 +602,7 @@ export default function VideoBatchStudio(props) {
     const pending = pendingTasksRef.current.filter(t => t.status === STATUS_RUNNING && !t.klingTaskId)
     if (pending.length) {
       setTasksQueue(prev => prev.map(t => (pending.some(p => p.id === t.id) ? { ...t, status: STATUS_CANCELED, error: reason || '已取消' } : t)))
-      Toast.warning(`已取消队列中 ${pending.length} 条待生成视频：${reason || ''}`)
+      Toast.warn(`已取消队列中 ${pending.length} 条待生成视频：${reason || ''}`)
     }
   }, [])
 
@@ -872,7 +875,7 @@ export default function VideoBatchStudio(props) {
         return url
       }
     } catch (e) {
-      Toast.warning('参考图上传失败，将按文生图生成：' + (e?.message || ''))
+      Toast.warn('参考图上传失败，将按文生图生成：' + (e?.message || ''))
     }
     return ''
   }, [refFile, refImageUrl, brand])
@@ -919,7 +922,7 @@ export default function VideoBatchStudio(props) {
 
   const generateFrameOne = useCallback(async (idx) => {
     const scene = scenes.find(s => s.idx === idx)
-    if (!scene) return false
+    if (!scene) return '未找到该分镜数据'
     const refUrl = await uploadRefImage()
     const prompt = buildImagePrompt(scene)
     startFrameProgressPolling()
@@ -937,13 +940,13 @@ export default function VideoBatchStudio(props) {
       const frame = Array.isArray(resp?.frames) ? resp.frames[0] : null
       if (!frame) {
         setFrames(prev => ({ ...prev, [idx]: { ...(prev[idx] || {}), status: 'fail', error: '生成请求无返回' } }))
-        return false
+        return '生成请求无返回'
       }
       setFrames(prev => ({
         ...prev,
         [idx]: { status: frame.status === 'fail' ? 'fail' : 'done', url: frame.url || '', error: frame.error || '', framePrompt: frame.framePrompt || '' },
       }))
-      return frame.status !== 'fail'
+      return frame.status !== 'fail' ? true : (frame.error || '生成失败（原因未知）')
     } finally {
       // 生成完成后停掉轮询（若有后续排队任务，下一条会重新启动）
       stopFrameProgressPolling()
@@ -958,9 +961,11 @@ export default function VideoBatchStudio(props) {
         const idx = frameQueueRef.current[0]
         setFrames(prev => ({ ...prev, [idx]: { ...(prev[idx] || {}), status: 'running' } }))
         try {
-          const ok = await generateFrameOne(idx)
-          if (ok) Toast.success(`分镜${pad2(idx)}分镜图已生成`)
-          else Toast.warning(`分镜${pad2(idx)}分镜图生成失败`)
+          // 返回值：true=成功；string=失败原因（把上游真实报错带出来，
+          // 否则用户只看到「生成失败」四个字，无法判断是配额、风控还是网络问题）
+          const r = await generateFrameOne(idx)
+          if (r === true) Toast.success(`分镜${pad2(idx)}分镜图已生成`)
+          else Toast.warn(`分镜${pad2(idx)}分镜图生成失败：${String(r).slice(0, 160)}`)
         } catch (e) {
           setFrames(prev => ({ ...prev, [idx]: { ...(prev[idx] || {}), status: 'fail', error: String(e?.message || e) } }))
           Toast.error(`分镜${pad2(idx)}分镜图生成失败：` + (e?.message || e))
@@ -975,7 +980,7 @@ export default function VideoBatchStudio(props) {
   }, [generateFrameOne])
 
   const requestGenerate = useCallback((idx = null) => {
-    if (!scenes.length) { Toast.warning('请先在步骤1填写分镜'); return }
+    if (!scenes.length) { Toast.warn('请先在步骤1填写分镜'); return }
     const targets = idx != null ? [idx] : scenes.map(s => s.idx)
     // 过滤已在队列中（含正在生成）的分镜，避免重复入队
     const newTargets = targets.filter(t => !frameQueueRef.current.includes(t))
@@ -1066,7 +1071,7 @@ export default function VideoBatchStudio(props) {
         if (typeof r?.reachable === 'boolean') {
           setToapisReachable(r.reachable)
           if (!r.reachable) {
-            Toast.warning(`ToAPIs 视频服务当前不可用（${r.base_url || ''}），请检查网络或域名配置`)
+            Toast.warn(`ToAPIs 视频服务当前不可用（${r.base_url || ''}），请检查网络或域名配置`)
           }
         }
         if (r?.models?.length) {
@@ -1112,27 +1117,16 @@ export default function VideoBatchStudio(props) {
     setShowImagePicker(true)
     setPickerLoading(true)
     try {
-      const buckets = [
-        { key: 'template_results', label: '模版图' },
-        { key: 'synthesized', label: '合成图' },
-        { key: 'mains', label: '主图素材' },
-        { key: 'cats', label: '猫咪素材' },
-      ]
-      const results = []
-      for (const b of buckets) {
-        try {
-          const r = await api.images(b.key, { brand }).catch(() => null)
-          const images = (r?.images || []).map(im => ({ name: im.name, url: absUrl(api.imageUrl(b.key, im.name, { brand })) }))
-          results.push({ ...b, images })
-        } catch {
-          results.push({ ...b, images: [] })
-        }
-      }
-      setPickerBuckets(results)
+      // 分类统一来自 src/galleryCategories.js，与「图库」页 Tab 保持一致
+      // （历史上这里硬编码了「模版图/合成图/主图素材/猫咪素材」四项，图库新增
+      //   分镜图/套图/其他生成图后这里没跟上，导致 Tab 对不上）
+      const cats = mapCategoryImages(await loadGalleryCategories(brand), (bucket, im) => ({
+        name: im.name,
+        url: absUrl(api.imageUrl(bucket, im.name, { brand })),
+      }))
+      setPickerBuckets(cats)
       // 默认优先选中「合成图」；若合成图为空则回退到第一个有图片的分类
-      const synth = results.find(b => b.key === 'synthesized')
-      const firstWithImages = results.find(b => b.images.length > 0)
-      setPickerActive((synth && synth.images.length > 0) ? 'synthesized' : (firstWithImages ? firstWithImages.key : 'mains'))
+      setPickerActive(defaultCategoryKey(cats))
     } finally {
       setPickerLoading(false)
     }
@@ -1156,14 +1150,14 @@ export default function VideoBatchStudio(props) {
 
   // ====== 提交视频任务（真实链接 ToAPIs）======
   const submitVideos = async () => {
-    if (!scenes.length) { Toast.warning('请先填写分镜脚本'); return }
+    if (!scenes.length) { Toast.warn('请先填写分镜脚本'); return }
     // 只生成"已生成分镜图"的分镜视频；没有分镜图则提示，不再自动生成
     const doneScenes = scenes.filter(scene => {
       const f = frames[scene.idx]
       return f && f.status === 'done' && f.url
     })
     if (doneScenes.length === 0) {
-      Toast.warning('暂时无分镜图片，无法生成视频，请先在第二步生成分镜图')
+      Toast.warn('暂时无分镜图片，无法生成视频，请先在第二步生成分镜图')
       return
     }
     setSubmitting(true)
@@ -1227,7 +1221,7 @@ export default function VideoBatchStudio(props) {
     const scene = scenes.find(s => s.idx === idx)
     const frame = frames[idx] || {}
     if (!scene || frame.status !== 'done' || !frame.url) {
-      Toast.warning(`分镜${pad2(idx)} 还没有可用的分镜图，请先在第二步生成`)
+      Toast.warn(`分镜${pad2(idx)} 还没有可用的分镜图，请先在第二步生成`)
       return
     }
     const dur = durSec(shots[idx - 1]?.duration)
@@ -1256,9 +1250,9 @@ export default function VideoBatchStudio(props) {
   // ====== 批量导出 ======
   const exportVideos = async () => {
     const done = tasksQueue.filter(t => t.status === STATUS_SUCCESS)
-    if (!done.length) { Toast.warning('当前没有已通过的视频'); return }
+    if (!done.length) { Toast.warn('当前没有已通过的视频'); return }
     const names = done.map(t => (t.videoUrl && String(t.videoUrl).split('/').pop()) || t.name || '').filter(Boolean)
-    if (!names.length) { Toast.warning('暂无可导出的视频文件'); return }
+    if (!names.length) { Toast.warn('暂无可导出的视频文件'); return }
     try {
       const r = await api.videoExportZip({ names, zip_name: '云眠花园视频', brand })
       if (r?.blob) {
@@ -1284,7 +1278,7 @@ export default function VideoBatchStudio(props) {
   }
   const exportSelectedVideos = async () => {
     const names = [...selectedVideos].filter(Boolean)
-    if (!names.length) { Toast.warning('请先勾选要导出的视频'); return }
+    if (!names.length) { Toast.warn('请先勾选要导出的视频'); return }
     try {
       const r = await api.videoExportZip({ names, zip_name: '云眠花园视频', brand })
       if (r?.blob) {
@@ -1324,7 +1318,7 @@ export default function VideoBatchStudio(props) {
       // 保存并进入下一步：确保 scenes 最新
       reparse(shots)
       if (!shots.some(s => String(s.imagePrompt || s.videoPrompt || s.description || '').trim())) {
-        Toast.warning('请至少填写一条分镜提示词')
+        Toast.warn('请至少填写一条分镜提示词')
         return
       }
     }
@@ -1612,7 +1606,7 @@ export default function VideoBatchStudio(props) {
                       >{desc}</p>
                       <div style={{ position: 'relative', aspectRatio: '9 / 16', overflow: 'hidden', borderRadius: 8, background: 'var(--surface-bg-2)', marginBottom: 10, border: '1px solid var(--border)' }}>
                         {frame.status === 'done' ? (
-                          <img src={ensureFrameUrl(frame.url, brand, account)} alt={`分镜${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <img src={api.thumbOf(ensureFrameUrl(frame.url, brand, account), 640)} alt={`分镜${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         ) : frame.status === 'running' ? (
                           <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                             <Spinner size="sm"/>
@@ -1715,7 +1709,7 @@ export default function VideoBatchStudio(props) {
                           {done && task.videoUrl ? (
                             <video src={task.videoUrl} controls style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : hasFrame ? (
-                            <img src={ensureFrameUrl(frame.url, brand, account)} alt={`分镜${scene.idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <img src={api.thumbOf(ensureFrameUrl(frame.url, brand, account), 640)} alt={`分镜${scene.idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : (
                             <div style={{ color: 'var(--muted-foreground)', fontSize: 12, textAlign: 'center', padding: 16 }}>请先在第二步<br />生成分镜图</div>
                           )}

@@ -11,6 +11,9 @@ import {
 } from '@heroui/react'
 import { HeroSelect, HeroTextArea } from '../components/ui'
 import { useImageDims, useContainerWidth, layoutMasonryRowMajor } from '../masonry'
+import {
+  loadGalleryCategories, mapCategoryImages, defaultCategoryKey, DEFAULT_GALLERY_CATEGORY,
+} from '../galleryCategories'
 
 // 套图生成：左侧与豆包 Agent 对话（确认/取消按钮 + 勾选卡片），右侧生成预览区
 
@@ -310,7 +313,7 @@ export default function SuiteGenerator({ brand, account }) {
   const [showImagePicker, setShowImagePicker] = useState(false)
   const [pickerBuckets, setPickerBuckets] = useState([])   // [{key, label, images:[{name,url}]}]
   const [pickerLoading, setPickerLoading] = useState(false)
-  const [pickerActive, setPickerActive] = useState('gen')
+  const [pickerActive, setPickerActive] = useState(DEFAULT_GALLERY_CATEGORY)
 
   const [sid, setSid] = useState(saved?.sid || '')
   const [state, setState] = useState(saved?.state || null)
@@ -447,41 +450,20 @@ export default function SuiteGenerator({ brand, account }) {
     setShowImagePicker(true)
     setPickerLoading(true)
     try {
-      // 分类与「图库」页保持一致：synthesized 桶按文件名前缀拆成
-      // 合成图(gen_) / 分镜图(frame_) / 套图(suite_) / 其他生成图(img_)，
-      // 否则所有生成图都挤在一个 tab 里。并发请求，弹窗打开更快。
-      const [synthRes, tplRes, mainsRes, catsRes] = await Promise.all([
-        api.images('synthesized', { brand }).catch(() => null),
-        api.images('template_results', { brand }).catch(() => null),
-        api.images('mains', { brand }).catch(() => null),
-        api.images('cats', { brand }).catch(() => null),
-      ])
-      const synthAll = synthRes?.images || []
-      // relUrl 是后端可解析的相对路径（/api/image/{category}/{name}?brand=..&account=..），
-      // 作为 ref_image 传给后端时会被归一化成本地文件 data URL（零网络依赖）。
-      // url 仅用于前端缩略图预览（前端 origin 绝对地址）。
-      const toImgs = (bucket, items) => (items || []).map(im => {
+      // 分类统一来自 src/galleryCategories.js，与「图库」页 Tab 完全一致：
+      // synthesized 桶按文件名前缀拆成 合成图(gen_) / 分镜图(frame_) /
+      // 套图(suite_) / 其他生成图(img_)，否则所有生成图都挤在一个 tab 里。
+      const cats = mapCategoryImages(await loadGalleryCategories(brand), (bucket, im) => ({
+        name: im.name,
         // url    = 仅用于弹窗内缩略图显示 → 走后端 ?w= 缩略图接口（Pillow 生成 + 长期缓存），
         //          避免一次请求上百张原图（每张 ~1.5MB）把带宽打满、图片迟迟出不来。
+        url: absUrl(api.thumbUrl(bucket, im.name, 480, { brand })),
         // relUrl = 选中后传给后端的原图相对路径（后端会归一化成 data URL，需保持原始分辨率）。
-        const thumb = api.thumbUrl(bucket, im.name, 480, { brand })
-        const rel = api.imageUrl(bucket, im.name, { brand })
-        return { name: im.name, url: absUrl(thumb), relUrl: rel }
-      })
-      const pickSynth = (re) => toImgs('synthesized', synthAll.filter(im => re.test(im.name || '')))
-      const results = [
-        { key: 'gen',       label: '合成图',     images: pickSynth(/^gen_/i) },
-        { key: 'frame',     label: '分镜图',     images: pickSynth(/^frame_/i) },
-        { key: 'templates', label: '模版图',     images: toImgs('template_results', tplRes?.images) },
-        { key: 'suite',     label: '套图',       images: pickSynth(/^suite_/i) },
-        { key: 'other',     label: '其他生成图', images: pickSynth(/^img_/i) },
-        { key: 'mains',     label: '主图素材',   images: toImgs('mains', mainsRes?.images) },
-        { key: 'cats',      label: '猫咪素材',   images: toImgs('cats', catsRes?.images) },
-      ]
-      setPickerBuckets(results)
-      // 默认选中第一个有图片的分类（合成图优先，为空则自动回退）
-      const firstWithImages = results.find(b => b.images.length > 0)
-      setPickerActive(firstWithImages ? firstWithImages.key : 'gen')
+        relUrl: api.imageUrl(bucket, im.name, { brand }),
+      }))
+      setPickerBuckets(cats)
+      // 默认优先选中「合成图」；若合成图为空则回退到第一个有图片的分类
+      setPickerActive(defaultCategoryKey(cats))
     } finally {
       setPickerLoading(false)
     }

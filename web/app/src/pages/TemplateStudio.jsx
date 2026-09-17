@@ -4,6 +4,9 @@ import Toast from '../toast'
 import Icon from '../components/Icon'
 import { Button as HeroButton, Modal as HeroModal, Spinner, ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import { HeroInput, HeroSlider, HeroSelect, HeroTextArea } from '../components/ui'
+import {
+  loadGalleryCategories, mapCategoryImages, defaultCategoryKey, DEFAULT_GALLERY_CATEGORY,
+} from '../galleryCategories'
 
 // ============================================================================
 // 模版合成工具（国内模版生成 + 跨境主图裁切 + 跨境模版库）
@@ -16,20 +19,17 @@ const CROSS_TPL_BUCKET = 'cross_templates'   // 跨境模版
 const RESULTS_BUCKET = 'template_results'    // 历史合成结果
 const CROP_RESULTS_BUCKET = 'crops'          // 跨境裁切结果
 
-// 从图库选择弹窗中展示的图库分类（与图库页面保持一致）
-const GALLERY_BUCKETS = [
-  { key: 'template_results', label: '模版图' },
-  { key: 'synthesized',      label: '合成图' },
-  { key: 'mains',            label: '主图素材' },
-  { key: 'cats',             label: '猫咪素材' },
-]
-
-// 按品牌返回图库分类：袜子品牌（wuduomian）不展示「猫咪素材」
-const SOCKS_BRAND = 'wuduomian'
-function getGalleryBuckets(brand) {
-  if (brand === SOCKS_BRAND) return GALLERY_BUCKETS.filter(b => b.key !== 'cats')
-  return GALLERY_BUCKETS
-}
+// 从图库选择弹窗的分类统一来自 src/galleryCategories.js（与「图库」页 Tab 一致）。
+// ★ 不要再在本文件里硬编码分类列表 —— 否则图库新增分类时这里又会掉队。
+const loadPickerBuckets = async (brand) =>
+  mapCategoryImages(await loadGalleryCategories(brand), (bucket, im) => ({
+    name: im.name,
+    // 列表用 300px 缩略图（性能：上百张原图同时加载会卡死）
+    url: api.thumbUrl(bucket, im.name, 300, { brand }),
+    // 确认合成 / 裁切时用原图（保证输出质量）
+    fullUrl: api.imageUrl(bucket, im.name, { brand }),
+    mtime: im.mtime,
+  }))
 
 // 国内模版生成：跨页面切换（组件卸载）时保留未完成的上传主图草稿，仅在成功合成后清空
 const domesticDraft = {} // brand -> { mainImages, mainIdx }
@@ -377,7 +377,7 @@ function DomesticTpl({ brand }) {
   const [dragging, setDragging] = useState(false)
   const dragRef = useRef(null)
   const [galleryOpen, setGalleryOpen] = useState(false)
-  const [galleryTab, setGalleryTab] = useState('mains')
+  const [galleryTab, setGalleryTab] = useState(DEFAULT_GALLERY_CATEGORY)
   const [galleryBuckets, setGalleryBuckets] = useState([])
   const [gallerySel, setGallerySel] = useState(() => new Set()) // 格式 `${bucket}:${name}`，支持跨分类多选
   const [galleryLoading, setGalleryLoading] = useState(false)
@@ -517,39 +517,19 @@ function DomesticTpl({ brand }) {
     setMainIdx(i => (i + 1) % mainImages.length)
   }
 
-  // 从图库选择主图（支持模版图/合成图/主图素材/猫咪素材）
+  // 从图库选择主图（分类与「图库」页一致，见 src/galleryCategories.js）
   const openGallery = async () => {
     setGalleryOpen(true)
     setGalleryLoading(true)
     setGallerySel(new Set())
     try {
-      const results = []
-      for (const b of getGalleryBuckets(brand)) {
-        try {
-          const r = await api.images(b.key, { brand })
-          results.push({
-            ...b,
-            images: (r?.images || []).map(im => ({
-              name: im.name,
-              // 列表用 300px 缩略图（性能：94 张原图同时加载会卡死）
-              url: api.thumbUrl(b.key, im.name, 300, { brand }),
-              // 确认裁切时用原图（保证裁切质量）
-              fullUrl: api.imageUrl(b.key, im.name, { brand }),
-              mtime: im.mtime,
-            }))
-          })
-        } catch {
-          results.push({ ...b, images: [] })
-        }
-      }
-      setGalleryBuckets(results)
+      const cats = await loadPickerBuckets(brand)
+      setGalleryBuckets(cats)
       // 默认优先选中「合成图」；若合成图为空则回退到第一个有图片的分类
-      const synth = results.find(b => b.key === 'synthesized')
-      const firstWithImages = results.find(b => b.images.length > 0)
-      setGalleryTab((synth && synth.images.length > 0) ? 'synthesized' : (firstWithImages ? firstWithImages.key : 'mains'))
+      setGalleryTab(defaultCategoryKey(cats))
     } catch {
-      setGalleryBuckets(getGalleryBuckets(brand).map(b => ({ ...b, images: [] })))
-      setGalleryTab('mains')
+      setGalleryBuckets([])
+      setGalleryTab(DEFAULT_GALLERY_CATEGORY)
     } finally {
       setGalleryLoading(false)
     }
@@ -575,7 +555,7 @@ function DomesticTpl({ brand }) {
 
   const confirmGallery = async () => {
     const keys = [...gallerySel]
-    if (!keys.length) { Toast.warning('请先勾选图片'); return }
+    if (!keys.length) { Toast.warn('请先勾选图片'); return }
     // 直接存图库原图 URL：避免把 20+ 张大图同步转 canvas 造成的长时间卡顿与内存暴涨
     const list = []
     for (const key of keys) {
@@ -611,7 +591,7 @@ function DomesticTpl({ brand }) {
   }
 
   const runBatch = async () => {
-    if (!mainImages.length) { Toast.warning('请先上传主图'); return }
+    if (!mainImages.length) { Toast.warn('请先上传主图'); return }
     setBatching(true)
     try {
       const tplImg = selTplObj ? await loadImage(selTplObj.src).catch(() => null) : null
@@ -972,7 +952,7 @@ function CrossCrop({ brand }) {
   const [results, setResults] = useState([])      // { id, dataUrl, name }
   const [resultSel, setResultSel] = useState(() => new Set())
   const [galleryOpen, setGalleryOpen] = useState(false)
-  const [galleryTab, setGalleryTab] = useState('mains')
+  const [galleryTab, setGalleryTab] = useState(DEFAULT_GALLERY_CATEGORY)
   const [galleryBuckets, setGalleryBuckets] = useState([]) // [{key,label,images:[{name,url,mtime}]}]
   const [gallerySel, setGallerySel] = useState(() => new Set()) // `${bucket}:${name}`
   const [galleryLoading, setGalleryLoading] = useState(false)
@@ -1047,33 +1027,13 @@ function CrossCrop({ brand }) {
     setGalleryLoading(true)
     setGallerySel(new Set())
     try {
-      const results = []
-      for (const b of getGalleryBuckets(brand)) {
-        try {
-          const r = await api.images(b.key, { brand })
-          results.push({
-            ...b,
-            images: (r?.images || []).map(im => ({
-              name: im.name,
-              // 列表用 300px 缩略图（性能：94 张原图同时加载会卡死）
-              url: api.thumbUrl(b.key, im.name, 300, { brand }),
-              // 确认裁切时用原图（保证裁切质量）
-              fullUrl: api.imageUrl(b.key, im.name, { brand }),
-              mtime: im.mtime,
-            }))
-          })
-        } catch {
-          results.push({ ...b, images: [] })
-        }
-      }
-      setGalleryBuckets(results)
+      const cats = await loadPickerBuckets(brand)
+      setGalleryBuckets(cats)
       // 默认优先选中「合成图」；若合成图为空则回退到第一个有图片的分类
-      const synth = results.find(b => b.key === 'synthesized')
-      const firstWithImages = results.find(b => b.images.length > 0)
-      setGalleryTab((synth && synth.images.length > 0) ? 'synthesized' : (firstWithImages ? firstWithImages.key : 'mains'))
+      setGalleryTab(defaultCategoryKey(cats))
     } catch {
-      setGalleryBuckets(getGalleryBuckets(brand).map(b => ({ ...b, images: [] })))
-      setGalleryTab('mains')
+      setGalleryBuckets([])
+      setGalleryTab(DEFAULT_GALLERY_CATEGORY)
     } finally {
       setGalleryLoading(false)
     }
@@ -1101,7 +1061,7 @@ function CrossCrop({ brand }) {
 
   const confirmGallery = async () => {
     const keys = [...gallerySel]
-    if (!keys.length) { Toast.warning('请先勾选图片'); return }
+    if (!keys.length) { Toast.warn('请先勾选图片'); return }
     // 先关弹窗并清空，蒙版立即消失（避免大图转换期间卡住）
     setGalleryOpen(false)
     setGallerySel(new Set())
@@ -1148,7 +1108,7 @@ function CrossCrop({ brand }) {
 
   // —— 开始裁切 ——
   const startCrop = async () => {
-    if (!images.length) { Toast.warning('请先上传或从图库选择主图'); return }
+    if (!images.length) { Toast.warn('请先上传或从图库选择主图'); return }
     setProcessing(true)
     try {
       const qs = QUALITY_SCALE[quality] || 1
@@ -1198,7 +1158,7 @@ function CrossCrop({ brand }) {
   const allSelected = results.length > 0 && resultSel.size === results.length
   const downloadResults = () => {
     const list = results.filter(r => resultSel.has(r.id))
-    if (!list.length) { Toast.warning('请先勾选要下载的图'); return }
+    if (!list.length) { Toast.warn('请先勾选要下载的图'); return }
     downloadAll(list, '云眠花园_裁切')
   }
 
@@ -1356,7 +1316,7 @@ function CrossCrop({ brand }) {
         </div>
       </div>
 
-      {/* 从图库选择弹窗（模版图/合成图/主图素材/猫咪素材） */}
+      {/* 从图库选择弹窗（分类见 src/galleryCategories.js，与「图库」页 Tab 一致） */}
       <Modal
         title="从图库选择主图"
         visible={galleryOpen}
@@ -1457,7 +1417,7 @@ function CrossTemplateLibrary({ brand }) {
   const [results, setResults] = useState([])
   const [resultSel, setResultSel] = useState(() => new Set())
   const [galleryOpen, setGalleryOpen] = useState(false)
-  const [galleryTab, setGalleryTab] = useState('mains')
+  const [galleryTab, setGalleryTab] = useState(DEFAULT_GALLERY_CATEGORY)
   const [galleryBuckets, setGalleryBuckets] = useState([])
   const [gallerySel, setGallerySel] = useState(() => new Set())
   const [galleryLoading, setGalleryLoading] = useState(false)
@@ -1602,32 +1562,12 @@ function CrossTemplateLibrary({ brand }) {
     setGalleryLoading(true)
     setGallerySel(new Set())
     try {
-      const results = []
-      for (const b of getGalleryBuckets(brand)) {
-        try {
-          const r = await api.images(b.key, { brand })
-          results.push({
-            ...b,
-            images: (r?.images || []).map(im => ({
-              name: im.name,
-              // 列表用 300px 缩略图（性能：94 张原图同时加载会卡死）
-              url: api.thumbUrl(b.key, im.name, 300, { brand }),
-              // 确认裁切时用原图（保证裁切质量）
-              fullUrl: api.imageUrl(b.key, im.name, { brand }),
-              mtime: im.mtime,
-            }))
-          })
-        } catch {
-          results.push({ ...b, images: [] })
-        }
-      }
-      setGalleryBuckets(results)
-      const synth = results.find(b => b.key === 'synthesized')
-      const firstWithImages = results.find(b => b.images.length > 0)
-      setGalleryTab((synth && synth.images.length > 0) ? 'synthesized' : (firstWithImages ? firstWithImages.key : 'mains'))
+      const cats = await loadPickerBuckets(brand)
+      setGalleryBuckets(cats)
+      setGalleryTab(defaultCategoryKey(cats))
     } catch {
-      setGalleryBuckets(getGalleryBuckets(brand).map(b => ({ ...b, images: [] })))
-      setGalleryTab('mains')
+      setGalleryBuckets([])
+      setGalleryTab(DEFAULT_GALLERY_CATEGORY)
     } finally {
       setGalleryLoading(false)
     }
@@ -1653,7 +1593,7 @@ function CrossTemplateLibrary({ brand }) {
 
   const confirmGallery = async () => {
     const keys = [...gallerySel]
-    if (!keys.length) { Toast.warning('请先勾选图片'); return }
+    if (!keys.length) { Toast.warn('请先勾选图片'); return }
     // 直接存图库原图 URL：避免把 20+ 张大图同步转 canvas 造成的长时间卡顿与内存暴涨
     const list = []
     for (const key of keys) {
@@ -1691,7 +1631,7 @@ function CrossTemplateLibrary({ brand }) {
 
   // 批量合成
   const runBatch = async () => {
-    if (!mainImages.length) { Toast.warning('请先上传主图'); return }
+    if (!mainImages.length) { Toast.warn('请先上传主图'); return }
     setBatching(true)
     try {
       const tplImg = selTplObj ? await loadImage(selTplObj.src).catch(() => null) : null
@@ -1764,7 +1704,7 @@ function CrossTemplateLibrary({ brand }) {
 
   const confirmCropAdd = async () => {
     const picked = cropAddItems.filter(it => cropAddSel.has(it.name))
-    if (!picked.length) { Toast.warning('请先勾选裁切结果'); return }
+    if (!picked.length) { Toast.warn('请先勾选裁切结果'); return }
     setCropAdding(true)
     try {
       const files = []
@@ -1783,7 +1723,7 @@ function CrossTemplateLibrary({ brand }) {
         Toast.success(`已从裁切结果添加 ${r.savedCount || files.length} 个模版`)
         await load()
       } else {
-        Toast.warning('没有可添加的图片')
+        Toast.warn('没有可添加的图片')
       }
       setCropAddOpen(false)
       setCropAddSel(new Set())

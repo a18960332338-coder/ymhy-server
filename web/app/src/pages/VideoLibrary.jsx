@@ -118,7 +118,7 @@ export function VideoLibrary({ brand, refreshKey }) {
 
   const exportSelected = async () => {
     const names = [...selected].filter(Boolean)
-    if (!names.length) { Toast.warning('请先勾选要导出的视频'); return }
+    if (!names.length) { Toast.warn('请先勾选要导出的视频'); return }
     setExporting(true)
     const ok = await exportVideosZip(names, brand)
     if (ok) setSelected(new Set())
@@ -127,7 +127,7 @@ export function VideoLibrary({ brand, refreshKey }) {
 
   const deleteSelected = async () => {
     const names = [...selected].filter(Boolean)
-    if (!names.length) { Toast.warning('请先勾选要删除的视频'); return }
+    if (!names.length) { Toast.warn('请先勾选要删除的视频'); return }
     setShowDeleteConfirm(true)
   }
 
