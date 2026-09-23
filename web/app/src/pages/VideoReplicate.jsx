@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
+import VideoHoverPreview from '../components/VideoHoverPreview'
 import { Button as HeroButton, Spinner, ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import { HeroTextArea, HeroSlider } from '../components/ui'
 
@@ -14,6 +15,10 @@ const STATUS = {
   SUCCESS: 'success',
   FAIL: 'fail',
 }
+
+// 轮询上限：3 秒一次 × 200 = 10 分钟。
+// 实测 seedance-2-mini 生成 8 秒视频约需 3 分钟，视频越长越久，6 分钟太紧。
+const MAX_POLLS = 200
 
 const VIDEO_EXT_RE = /\.(mp4|mov|webm|mkv|avi|flv|m4v|mpg|mpeg)$/i
 const IMG_EXT_RE = /\.(jpg|jpeg|png|webp|bmp|gif)$/i
@@ -234,17 +239,22 @@ function ReferenceStack({ items, onClick, onDropFile, onMouseEnter, onMouseLeave
 }
 
 // 输入框里的参考内容小芯片：迷你缩略图 + 名称 + 格式
+// 位置：由父级放在输入框**内部**（芯片在上、文字在下），本组件只负责样式。
+// 底色：白色 10% 透明度（设计令牌体系本身就是"白透明度叠在深色底"：
+//   --surface-tertiary 是白 7%、--border 是白 10%、--border-strong 是白 16%）。
+//   ⚠️ 芯片现在贴在白 7% 的输入框底上，只靠 10% 填充几乎看不出边界，
+//   所以额外加一条 16% 白色发丝边 —— 既有"白 10%"的通透感，又不会糊成一片。
 function ReferenceChips({ items, onRemove }) {
   if (!items.length) return null
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '10px 12px 0' }}>
       {items.map((ref) => (
         <div
           key={ref.id}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
             padding: '4px 8px 4px 4px', borderRadius: 8,
-            background: 'var(--muted)', border: '1px solid var(--border)',
+            background: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.16)',
             fontSize: 12, color: 'var(--foreground)', maxWidth: '100%',
           }}
         >
@@ -276,6 +286,9 @@ function ReferenceChips({ items, onRemove }) {
 function ReplicateHistory({ brand, refreshKey }) {
   const [videos, setVideos] = useState([])
   const [loading, setLoading] = useState(true)
+  // hover 悬浮预览：记录当前悬浮的视频名 + 卡片位置（浮层要靠它定位）
+  const [hoveredName, setHoveredName] = useState(null)
+  const [hoverRect, setHoverRect] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -312,6 +325,8 @@ function ReplicateHistory({ brand, refreshKey }) {
               key={v.name}
               className="library-card"
               onClick={() => { const a = document.createElement('a'); a.href = v.url; a.target = '_blank'; a.rel = 'noopener'; a.click() }}
+              onMouseEnter={(e) => { setHoveredName(v.name); setHoverRect(e.currentTarget.getBoundingClientRect()) }}
+              onMouseLeave={() => { setHoveredName(null); setHoverRect(null) }}
               style={{ cursor: 'pointer' }}
             >
               <div className="thumb" style={{ aspectRatio: '9 / 16' }}>
@@ -339,6 +354,12 @@ function ReplicateHistory({ brand, refreshKey }) {
           ))
         )}
       </div>
+
+      {/* hover 悬浮预览：与「视频库」共用同一个组件，交互与尺寸算法完全一致 */}
+      <VideoHoverPreview
+        src={(videos.find((x) => x.name === hoveredName) || {}).url}
+        rect={hoverRect}
+      />
     </div>
   )
 }
@@ -401,10 +422,11 @@ export default function VideoReplicate({ brand, account }) {
     api.videoToapisModels().then((r) => {
       if (!mounted) return
       setReachable(!!r?.reachable)
+      // 后端只返回「官方文档确认支持参考视频」的模型（白名单按文档维护），这里直接用
       const ms = (r?.models || []).filter((m) => m.supports_video_ref)
       setModels(ms)
       if (ms.length && !modelId) {
-        const def = ms.find((m) => m.id === CHEAPEST_DEFAULT_MODEL) || ms.find((m) => m.id === 'kling-v3') || ms[0]
+        const def = ms.find((m) => m.id === CHEAPEST_DEFAULT_MODEL) || ms[0]
         applyModel(def)
       }
     }).catch(() => { if (mounted) setModels([]) })
@@ -523,9 +545,15 @@ export default function VideoReplicate({ brand, account }) {
   }
 
   const onPickReference = (e) => {
-    const files = e.target.files
+    // ★ 必须先 Array.from 快照，再清空 input ★
+    // `e.target.files` 是**活的 FileList**：一旦把 input.value 置空，这个对象会**同时被清空**。
+    // 老代码写成 `const files = e.target.files; e.target.value = ''; if (files.length) ...`，
+    // 于是 files.length 永远等于 0 —— 从文件选择框选完视频后什么都不发生、连提示都没有
+    // （已在 Chromium 里实测复现：老写法 length=0，先快照才拿到 1）。
+    // 另外用 Array.from 拷贝后，同一个文件再次选择也能重新触发 change 事件。
+    const files = Array.from(e.target.files || [])
     e.target.value = ''
-    if (files && files.length) routeFiles(Array.from(files))
+    if (files.length) routeFiles(files)
   }
 
   const clearAllRefs = () => {
@@ -642,8 +670,27 @@ export default function VideoReplicate({ brand, account }) {
         pollRefs.current[localId] = false
         return
       }
-      if (polls >= 120) {
-        updateTask(localId, { status: STATUS.FAIL, progress: 100, error: '生成超时（>6分钟），请稍后在视频库查看结果' })
+      // 注意：st 还可能是 'query_error'（后端查询 ToAPIs 时网络异常/超时）。
+      // 这种情况**不代表生成失败**——任务通常还在后台跑，所以继续轮询等终态。
+      if (polls >= MAX_POLLS) {
+        // 到达轮询上限也不等于失败：任务已由后端落盘，先主动触发一次补下载同步，
+        // 若后台已完成就能直接把结果补回来（避免"其实成功了却显示失败"）。
+        try {
+          const sync = await api.videoToapisSync(b)
+          const hit = (sync && Array.isArray(sync.downloaded))
+            ? sync.downloaded.find((d) => d && d.task_id === taskId) : null
+          if (hit && hit.url) {
+            updateTask(localId, { status: STATUS.SUCCESS, progress: 100, videoUrl: hit.url, notice: '已由后台同步补下载入库' })
+            pollRefs.current[localId] = false
+            setHistoryKey((k) => k + 1)
+            return
+          }
+        } catch (e) { /* ignore */ }
+        updateTask(localId, {
+          status: STATUS.RUNNING,
+          progress: 95,
+          notice: '等待超过 10 分钟，已停止轮询。任务仍在后台继续，完成后会自动出现在下方「已生成视频」；也可以点右上角 × 关掉本卡片再重新提交。',
+        })
         pollRefs.current[localId] = false
         return
       }
@@ -772,22 +819,28 @@ export default function VideoReplicate({ brand, account }) {
             <input ref={refInputRef} type="file" accept="video/*,image/*" multiple style={{ display: 'none' }} onChange={onPickReference} />
           </div>
 
-          {/* 提示词 + 参考内容芯片 */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-            <div
-              onMouseEnter={openRefHover}
-              onMouseLeave={closeRefHover}
-            >
-              <ReferenceChips items={allRefs} onRemove={(id) => { if (video && video.id === id) removeVideo(); else removeImage(id) }} />
-            </div>
+          {/* 提示词框：参考素材芯片与文字同处**同一个输入框内**（芯片在上、文字在下），
+              而不是把芯片单独摆在输入框外面。
+              注意：原来输入框自带 bg/border，现在由这层容器统一提供（内层 TextArea 用 bare 去掉自身边框），
+              hover / focus 的视觉反馈也一并挪到这里，避免出现"双边框"。
+              内层 TextArea 自己带 px-3 py-2，所以容器只给 1px 内边距，让文字位置和原来一致；
+              字号/文字色/占位符色用 [&_textarea] 后代选择器补回来（bare 分支没有这些类，
+              而用 inputClassName 覆盖会和 bare 自带的 text-[14px] 撞车、谁生效取决于 CSS 排序）。 */}
+          <div
+            onMouseEnter={openRefHover}
+            onMouseLeave={closeRefHover}
+            className="flex flex-1 flex-col min-w-0 rounded-(--radius-lg) border border-(--border) bg-(--surface-tertiary) p-px transition-colors hover:bg-(--surface-secondary) hover:border-(--border-strong) focus-within:border-(--accent) [&_textarea]:text-[13px] [&_textarea]:text-(--foreground) [&_textarea]:placeholder:text-(--muted-foreground)"
+          >
+            <ReferenceChips items={allRefs} onRemove={(id) => { if (video && video.id === id) removeVideo(); else removeImage(id) }} />
             <HeroTextArea
+              bare
               value={prompt}
               onChange={(v) => setPrompt(v)}
               placeholder="描述你想复刻的视频效果：画面内容、动作、风格、运镜、光线……"
               minRows={3}
               maxRows={10}
-              style={{ flex: 1, minHeight: 72 }}
-              inputClassName="h-full"
+              className="flex-1"
+              inputClassName="h-full min-h-[72px]"
             />
           </div>
         </div>
@@ -1114,6 +1167,12 @@ export default function VideoReplicate({ brand, account }) {
                   {t.taskId ? `task_id: ${t.taskId}` : '准备提交…'}
                   {typeof t.creditsUsed === 'number' && <span style={{ marginLeft: 10 }}>消耗积分：{t.creditsUsed}</span>}
                 </div>
+
+                {t.notice && (
+                  <div style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid var(--warning)', color: 'var(--warning)', borderRadius: 8, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}>
+                    {t.notice}
+                  </div>
+                )}
 
                 {t.status === STATUS.FAIL && (
                   <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid var(--danger)', color: 'var(--danger)', borderRadius: 8, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}>

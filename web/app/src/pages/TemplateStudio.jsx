@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import api from '../api'
+import api, { EXPORT_MAX_PER_ZIP } from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
 import { Button as HeroButton, Modal as HeroModal, Spinner, ToggleButton, ToggleButtonGroup } from '@heroui/react'
@@ -172,6 +172,11 @@ function downloadAll(items, prefix) {
 // 批量导出：用后端 /api/export/zip 把多张图打包成一个 zip 下载（避免浏览器拦截多文件自动下载，导致只导出一张）
 async function exportLibraryZip(names, bucket, brand, zipName) {
   if (!names || !names.length) return
+  // 与后端 _EXPORT_ZIP_MAX_FILES 一致的上限：超了直接提示，不发这个注定 400 的请求
+  if (names.length > EXPORT_MAX_PER_ZIP) {
+    Toast.warn(`单次最多导出 ${EXPORT_MAX_PER_ZIP} 张，已选 ${names.length} 张，请分批导出`)
+    return
+  }
   try {
     const r = await api.exportZip({ bucket, names, zip_name: zipName, brand })
     if (r?.blob) {

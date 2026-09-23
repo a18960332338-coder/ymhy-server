@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import api from '../api'
+import api, { EXPORT_MAX_PER_ZIP } from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
 import bananaIcon from '../assets/banana-icon.png'
@@ -2099,6 +2099,12 @@ function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon 
   const doExport = async () => {
     const names = items.filter(it => selected.has(it.name)).map(it => it.name)
     if (!names.length) { Toast.warn('请先勾选要导出的图片'); return }
+    // 超过单次上限直接拦住，不要发出去（后端也会 400，但白等一次请求没意义）。
+    // 上限与后端 _EXPORT_ZIP_MAX_FILES 一致，见 api.js 的 EXPORT_MAX_PER_ZIP 注释。
+    if (names.length > EXPORT_MAX_PER_ZIP) {
+      Toast.warn(`单次最多导出 ${EXPORT_MAX_PER_ZIP} 张，已选 ${names.length} 张，请分批导出`)
+      return
+    }
     setExporting(true)
     try {
       // 本轮唯一批次戳（秒级），保证跨轮导出文件名不重复

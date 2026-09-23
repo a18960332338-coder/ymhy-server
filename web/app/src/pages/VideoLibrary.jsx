@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
+import VideoHoverPreview from '../components/VideoHoverPreview'
 import { Button as HeroButton, Chip, Modal as HeroModal, Spinner } from '@heroui/react'
 
 // 时长格式化：秒 -> m:ss 或 Ns
@@ -230,53 +231,13 @@ export function VideoLibrary({ brand, refreshKey }) {
         )}
       </div>
 
-      {/* hover 浮层视频预览：紧贴卡片右侧，最上层无遮挡 */}
-      {hoveredName && hoverRect && (() => {
-        const v = videos.find(x => x.name === hoveredName)
-        if (!v) return null
-        const cardW = hoverRect.width
-        const cardH = hoverRect.height
-        const W = Math.min(Math.round(cardW * 1.3), window.innerWidth - 48)
-        const H = Math.min(Math.round(W * 16 / 9), window.innerHeight - 48)
-        // 默认：紧贴卡片右侧，垂直居中对齐卡片
-        let left = hoverRect.right + 10
-        let top = hoverRect.top + (cardH - H) / 2
-        // 边界修正：右侧放不下 → 放左侧
-        if (left + W > window.innerWidth - 16) left = hoverRect.left - W - 10
-        // 左侧也放不下 → 贴右边缘
-        if (left < 16) left = 16
-        // 顶部溢出 → 对齐顶部
-        if (top < 16) top = 16
-        // 底部溢出 → 对齐底部
-        if (top + H > window.innerHeight - 16) top = window.innerHeight - H - 16
-        return (
-          <div
-            style={{
-              position: 'fixed',
-              zIndex: 99999,
-              left,
-              top,
-              width: W,
-              height: H,
-              borderRadius: 12,
-              border: '2px solid #fff',
-              boxShadow: '0 12px 36px rgba(0,0,0,.6)',
-              overflow: 'hidden',
-              backgroundColor: '#000',
-              pointerEvents: 'none',
-            }}
-          >
-            <video
-              src={v.url}
-              autoPlay
-              muted
-              playsInline
-              loop
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-            />
-          </div>
-        )
-      })()}
+      {/* hover 浮层视频预览：改用共享组件（尺寸按视频真实比例自适应）。
+          原来这里写死 16:9，而本项目视频基本都是 9:16 竖屏 —— 浮层是个横框，
+          竖屏视频被 cover 裁掉了上下大半，等于"预览了个中间段"。 */}
+      <VideoHoverPreview
+        src={(videos.find((x) => x.name === hoveredName) || {}).url}
+        rect={hoverRect}
+      />
 
       {/* 视频播放弹窗（HeroUI Modal） */}
       <HeroModal.Root isOpen={!!playing} onOpenChange={(open) => { if (!open) setPlaying(null) }}>
