@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import api, { EXPORT_MAX_PER_ZIP } from '../api'
+import api, { EXPORT_MAX_FILES } from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
 import { Button as HeroButton, Modal as HeroModal, Spinner, ToggleButton, ToggleButtonGroup } from '@heroui/react'
@@ -169,25 +169,30 @@ function downloadAll(items, prefix) {
   Toast.success(`开始下载 ${items.length} 张图`)
 }
 
-// 批量导出：用后端 /api/export/zip 把多张图打包成一个 zip 下载（避免浏览器拦截多文件自动下载，导致只导出一张）
+// 批量导出：后端签发 COS 预签名直链，浏览器**直连 COS** 逐张下载。
+// ★ 不要再改回「后端打包 zip」★（2026-09-24）：服务器上行只有 ~20KB/s，
+// 打包的 zip 在传输时会一直卡在「打包中」（用户实际遇到的现象）；
+// 直链实测快约 220 倍。
 async function exportLibraryZip(names, bucket, brand, zipName) {
   if (!names || !names.length) return
-  // 与后端 _EXPORT_ZIP_MAX_FILES 一致的上限：超了直接提示，不发这个注定 400 的请求
-  if (names.length > EXPORT_MAX_PER_ZIP) {
-    Toast.warn(`单次最多导出 ${EXPORT_MAX_PER_ZIP} 张，已选 ${names.length} 张，请分批导出`)
+  if (names.length > EXPORT_MAX_FILES) {
+    Toast.warn(`单次最多导出 ${EXPORT_MAX_FILES} 张，已选 ${names.length} 张，请分批导出`)
     return
   }
   try {
-    const r = await api.exportZip({ bucket, names, zip_name: zipName, brand })
-    if (r?.blob) {
-      const url = URL.createObjectURL(r.blob)
+    const r = await api.exportPresign({ bucket, names, brand })
+    const list = Array.isArray(r?.items) ? r.items : []
+    if (!list.length) { Toast.warn('没有可导出的文件'); return }
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i]
       const a = document.createElement('a')
-      a.href = url
-      a.download = r.filename || `${zipName}.zip`
-      document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 500)
-      URL.revokeObjectURL(url)
-      Toast.success(`已导出 ${names.length} 张图（zip）`)
+      a.href = it.url
+      a.download = it.name
+      document.body.appendChild(a); a.click(); a.remove()
+      // 逐张间隔：避免浏览器把多次下载合并成一次询问
+      await new Promise(res => setTimeout(res, 350))
     }
+    Toast.success(`已开始下载 ${list.length} 张图`)
   } catch (e) {
     Toast.error('导出失败：' + (e?.message || e))
   }

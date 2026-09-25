@@ -11,27 +11,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-
-
-def _parse_last_modified(value):
-    """把 COS SDK 返回的 LastModified（可能是 datetime 或 ISO 字符串）统一成 datetime。"""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value
-    text = str(value).strip()
-    if not text:
-        return None
-    # 兼容 Python 3.10：datetime.fromisoformat 不支持 'Z' 后缀（3.11+ 才支持），手动替换为 +00:00
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        return datetime.fromisoformat(text)
-    except ValueError:
-        return None
 
 _PREVIOUSLY_LOADED = False
 
@@ -69,23 +50,6 @@ def _client():
 def bucket() -> str:
     load_env()
     return os.environ.get("COS_BUCKET", "")
-
-
-def presign(key: str, expires: int = 7200) -> str:
-    """签发对象的「预签名下载直链」（GET，默认 2 小时有效）。
-
-    ★ 为什么导出必须走直链，而不是由本机转发 ★（2026-09-24 实测数据）
-    本机上行带宽实测仅 ~20KB/s。同一张 7MB 的图：
-        走服务器转发 → 20 秒只传了 393KB（照这速度要 6 分钟才能下完）
-        走 COS 直链   → 1.7 秒传完整个文件（4.3MB/s，快约 220 倍）
-    后果：「打包导出」在这台机器上根本不可能成功 —— 12 张的 zip 有 96MB，
-    走服务器要传 85 分钟，用户界面会永远停在「打包中」（实测就是这样）。
-    所以凡是要把图库文件交给浏览器的场景，都应该签发直链让浏览器直连 COS，
-    而不是自己转发。注意直链有有效期，前端拿到后要尽快用掉。
-    """
-    return _client().get_presigned_url(
-        Bucket=bucket(), Key=key, Method="GET", Expired=expires,
-    )
 
 
 def exists(key: str) -> bool:
@@ -126,7 +90,7 @@ def list_meta(prefix: str = "") -> list[dict]:
             items.append({
                 "Key": c["Key"],
                 "Size": int(c.get("Size", 0) or 0),
-                "LastModified": _parse_last_modified(c.get("LastModified")),
+                "LastModified": c.get("LastModified"),
             })
         if str(r.get("IsTruncated")).lower() != "true":
             break

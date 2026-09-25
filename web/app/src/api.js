@@ -277,6 +277,11 @@ export const api = {
   batchList: (opts = {}) => request(`/api/batch/list${_qs({ brand: opts.brand })}`),
   // 结果图库批量导出：打包成 zip 返回 Blob + 文件名（Content-Disposition）
   exportZip: (body) => requestBlob('/api/export/zip', { method: 'POST', body: JSON.stringify(body) }),
+  // 导出（**推荐路径**）：后端只签发 COS 预签名直链，下载由浏览器**直连 COS** 完成。
+  // 为什么不走上面的 exportZip：那条路是「服务器把文件转发给你」，而服务器上行只有 ~20KB/s。
+  // 实测同一张 7MB 的图：走服务器 20 秒只传了 393KB；走 COS 直链 1.7 秒传完（快约 220 倍）。
+  // 用户选 12 张导出时 zip 有 96MB，走服务器要传 85 分钟 —— 界面会永远停在「打包中」。
+  exportPresign: (body) => request('/api/export/presign', { method: 'POST', body: JSON.stringify(body) }),
   crawl: () => Promise.reject(new Error('1688模板功能已停用，请使用1688链接导入页面')),
 
   // 视频批量生成：提交任务（含 prompt 列表、参数、参考图 bucket/name）
@@ -538,11 +543,10 @@ export const api = {
 
 export default api
 
-// 单次「打包导出」的文件数上限 —— **必须与后端 `_EXPORT_ZIP_MAX_FILES` 保持一致**。
+// 单次导出的文件数上限 —— **必须与后端 `_EXPORT_PRESIGN_MAX_FILES` 保持一致**。
 //
-// 背景（2026-09-23 事故）：后端 `/api/export/zip` 是「把用户选中的 N 个文件聚合成一个 zip」
-// 的重活。当时没有任何规模限制，用户选 119 张（约 820MB）点导出后，直接把整台服务器
-// 拖到失去响应近 10 分钟（所有端口不通、SSH 都连不上）。
-// 现在后端装了三道闸门（数量 / 体积 / 并发），超限返回 400；
-// 前端在这里**提前拦住**，是为了不让用户白等一次注定失败的请求。
-export const EXPORT_MAX_PER_ZIP = 80
+// 导出已改为「后端签发 COS 预签名直链 → 浏览器直连 COS 下载」（见上面 exportPresign 的说明），
+// 后端不再转发文件、只花几毫秒签 URL，所以上限可以放得很宽，
+// 不再需要为「打包耗尽服务器内存/CPU」设防（那种事故 2026-09-23 发生过一次）。
+// 这里仍设一个上限，只是为了别让浏览器一次性排几百个下载任务。
+export const EXPORT_MAX_FILES = 300

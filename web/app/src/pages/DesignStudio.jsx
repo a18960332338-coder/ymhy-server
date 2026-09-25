@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import api, { EXPORT_MAX_PER_ZIP } from '../api'
+import api, { EXPORT_MAX_FILES } from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
 import bananaIcon from '../assets/banana-icon.png'
@@ -2099,10 +2099,8 @@ function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon 
   const doExport = async () => {
     const names = items.filter(it => selected.has(it.name)).map(it => it.name)
     if (!names.length) { Toast.warn('请先勾选要导出的图片'); return }
-    // 超过单次上限直接拦住，不要发出去（后端也会 400，但白等一次请求没意义）。
-    // 上限与后端 _EXPORT_ZIP_MAX_FILES 一致，见 api.js 的 EXPORT_MAX_PER_ZIP 注释。
-    if (names.length > EXPORT_MAX_PER_ZIP) {
-      Toast.warn(`单次最多导出 ${EXPORT_MAX_PER_ZIP} 张，已选 ${names.length} 张，请分批导出`)
+    if (names.length > EXPORT_MAX_FILES) {
+      Toast.warn(`单次最多导出 ${EXPORT_MAX_FILES} 张，已选 ${names.length} 张，请分批导出`)
       return
     }
     setExporting(true)
@@ -2113,37 +2111,29 @@ function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon 
       const ts = `${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
       const br = brand || 'cloudsleepgarden'
 
-      if (names.length <= 5) {
-        // ≤5 张：单张逐个下载原图（同源直链，无打包等待）
-        for (let i = 0; i < names.length; i++) {
-          const nm = names[i]
-          const seq = String(i + 1).padStart(2, '0')
-          const m = nm.match(/\.(png|jpe?g|webp|gif|svg)$/i)
-          const ext = m ? m[0] : '.png'
-          const out = `${ts}_${seq}_${nm.slice(0, -ext.length)}${ext}`
-          const a = document.createElement('a')
-          a.href = api.imageUrl(BUCKET_OUT, nm, { brand: br })
-          a.download = out
-          document.body.appendChild(a); a.click(); a.remove()
-          // 逐张间隔，避免浏览器把多次下载合并成一次询问
-          await new Promise(r => setTimeout(r, 400))
-        }
-        Toast.success(`已导出 ${names.length} 张${label}`)
-      } else {
-        // >5 张：后端打包 zip 下载
-        Toast.info(`正在打包 ${names.length} 张…`)
-        const { blob, filename } = await api.exportZip({
-          bucket: BUCKET_OUT, names, brand: br,
-          zip_name: `${label}_${names.length}张_${ts}`,
-        })
-        const url = URL.createObjectURL(blob)
+      // ★ 走 COS 直链逐张下载，不要再改回「后端打包 zip」★（2026-09-24）
+      // 服务器上行带宽只有 ~20KB/s：12 张图打成的 zip 有 96MB，走服务器要传 85 分钟，
+      // 界面会永远停在「打包中」（用户实际遇到的现象，Nginx 日志显示只发出了 128KB）。
+      // 直链下浏览器直连 COS，实测快约 220 倍（7MB 从 6 分钟变成 1.7 秒）。
+      const r = await api.exportPresign({ bucket: BUCKET_OUT, names, brand: br })
+      const list = Array.isArray(r?.items) ? r.items : []
+      if (!list.length) { Toast.warn('没有可导出的文件'); return }
+      Toast.info(`开始下载 ${list.length} 张${label}…`)
+      for (let i = 0; i < list.length; i++) {
+        const it = list[i]
+        const seq = String(i + 1).padStart(2, '0')
+        const m = it.name.match(/\.(png|jpe?g|webp|gif|svg)$/i)
+        const ext = m ? m[0] : '.png'
+        const out = `${ts}_${seq}_${it.name.slice(0, -ext.length)}${ext}`
         const a = document.createElement('a')
-        a.href = url
-        a.download = filename || `${label}_${names.length}张_${ts}.zip`
-        document.body.appendChild(a); a.click()
-        setTimeout(() => { a.remove(); URL.revokeObjectURL(url) }, 800)
-        Toast.success(`已导出 ${names.length} 张${label}（zip 内已按序号命名）`)
+        a.href = it.url
+        a.download = out
+        document.body.appendChild(a); a.click(); a.remove()
+        // 逐张间隔：避免浏览器把多次下载合并成一次询问，也避免瞬间开一堆连接
+        await new Promise(res => setTimeout(res, 350))
       }
+      const skippedN = Array.isArray(r?.skipped) ? r.skipped.length : 0
+      Toast.success(`已开始下载 ${list.length} 张${label}${skippedN ? `（${skippedN} 张跳过）` : ''}`)
       setSelected(new Set())
     } catch (e) {
       Toast.error('导出失败：' + (e?.message || e))
