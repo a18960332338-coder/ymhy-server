@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Input, Modal, Toast, Tooltip, Radio } from '@douyinfe/semi-ui'
-import api from '../api'
+import api, { W_ICON } from '../api'
 
 const { RadioGroup } = Radio
 
@@ -193,7 +193,7 @@ export default function ResultsLibrary({ brand, buckets }) {
                       <div className="thumb"
                         onClick={() => selMode ? toggleSel(it.name) : setPreview(it)}
                         style={{ cursor: selMode ? 'pointer' : 'zoom-in', position: 'relative' }}>
-                        <img src={api.thumbUrl(BUCKET, it.name, 300, { brand })} alt={it.name} loading="lazy" />
+                        <img src={api.thumbUrl(BUCKET, it.name, W_ICON, { brand })} alt={it.name} loading="lazy" />
                         {selMode && selected[it.name] && (
                           <div style={{
                             position: 'absolute', inset: 0,

@@ -71,20 +71,20 @@ def bucket() -> str:
     return os.environ.get("COS_BUCKET", "")
 
 
-def presign(key: str, expires: int = 7200) -> str:
-    """签发对象的「预签名下载直链」（GET，默认 2 小时有效）。
+def presign(key: str, expires: int = 7200, method: str = "GET") -> str:
+    """签发对象的预签名直链（默认 GET = 下载；method="PUT" = 允许浏览器直传）。
 
-    ★ 为什么导出必须走直链，而不是由本机转发 ★（2026-09-24 实测数据）
-    本机上行带宽实测仅 ~20KB/s。同一张 7MB 的图：
-        走服务器转发 → 20 秒只传了 393KB（照这速度要 6 分钟才能下完）
-        走 COS 直链   → 1.7 秒传完整个文件（4.3MB/s，快约 220 倍）
-    后果：「打包导出」在这台机器上根本不可能成功 —— 12 张的 zip 有 96MB，
-    走服务器要传 85 分钟，用户界面会永远停在「打包中」（实测就是这样）。
-    所以凡是要把图库文件交给浏览器的场景，都应该签发直链让浏览器直连 COS，
-    而不是自己转发。注意直链有有效期，前端拿到后要尽快用掉。
+    ★ 为什么上传/下载都不该由本机中转 ★（2026-09-24 / 09-28 实测）
+        · 下载：走服务器 20 秒只传 393KB；走 COS 直链 1.7 秒传完 7.4MB（快约 220 倍）
+        · 上传：经服务器 5.61MB 要 30.2 秒；浏览器直传 COS 只要 4.2 秒（快约 7 倍）
+    所以「把文件交给浏览器」和「把文件收进来」都应该让浏览器直连 COS。
+
+    PUT 直链的安全性：签名绑定了 key 与有效期，**没有签名就写不进来**；
+    即使桶的 CORS 允许 PUT，别人也拿不到可用的 URL。
+    注意直链有有效期，前端拿到后要尽快用掉。
     """
     return _client().get_presigned_url(
-        Bucket=bucket(), Key=key, Method="GET", Expired=expires,
+        Bucket=bucket(), Key=key, Method=method, Expired=expires,
     )
 
 

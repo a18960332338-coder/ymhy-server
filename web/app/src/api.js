@@ -60,6 +60,77 @@ function fullUrl(path) {
   return (DEV ? '' : BASE_URL) + path
 }
 
+// ---------- 缩略图「COS 直链」映射表 ----------
+//
+// 为什么需要它（2026-09-28 实测数据）：
+//   连本机服务器首字节 **2.24s**（TLS 握手 1.19s，服务器在境外）；连 COS 只要 **0.39s**。
+//   缩略图虽然已由后端 302 到 COS，但**每张仍要先交一次这次跨境往返**（实测 ~0.8s/张）。
+//
+// 解法：/api/images 支持 `?thumbs=480`，在**列表响应里**顺带把最前面几张图的 COS 直链
+// 一起带回来 —— 等于用「列表本来就要发的这一次请求」把 N 张图的直链一次带回，
+// 省掉 N 次往返。这里把它存成映射表，thumbUrl() / thumbOf() 一算出来就换成直链，
+// 于是 <img> 直接指向 COS，一次到位。
+//
+// ⚠️ 两条不要越过的边界 ⚠️
+//   1) **不要把预热范围扩大**：本机上行只有约 20KB/s，而一条预签名 URL 约 320 字节 ——
+//      多带 100KB 就要用户多等 5 秒。所以后端只签最前面 40 张、只签一档
+//      （见 app.py 的 _THUMB_WARM_* 注释，那里有完整算账）。
+//   2) **不要在 thumbUrl() 未命中时临时补签**：会引发请求风暴；更要紧的是 URL 变了会让
+//      同一个 <img> 把同一张图下载两遍（先 302 路径、再直链），反而更慢。
+const _thumbDirect = new Map() // 后端缩略图路径（含查询串） → { url, at }
+// 后端签的直链有效期 6 小时。这里 5 小时后主动失效，留 1 小时余量 ——
+// 宁可退回「后端 302 路径」（慢约 0.4s），也不要让页面开着几小时后整屏图片 403。
+const _THUMB_DIRECT_TTL_MS = 5 * 60 * 60 * 1000
+
+// 取直链（顺带做过期检查）。过期即丢弃，下次渲染自然回退到后端路径。
+function _directOf(key) {
+  const hit = _thumbDirect.get(key)
+  if (!hit) return null
+  if (Date.now() - hit.at > _THUMB_DIRECT_TTL_MS) {
+    _thumbDirect.delete(key)
+    return null
+  }
+  return hit.url
+}
+
+// 缩略图宽度档位：**全站归一到这两档**。
+// 档位越多、预热的命中率越低 —— 归一，是「直连」能真正生效的前提
+// （原先 120/300/480/720/960 五档并存，一档预热只能覆盖约 1/5 的显示场景）。
+export const W_ICON = 480   // 小图标 / 列表 / 网格 / 卡片：显示区 ≤ 480px 都用它
+export const W_LARGE = 960  // 只有需要看清细节的大预览才用它
+
+function _catOf(bucket) {
+  return bucket === 'cats' ? 'cat' : bucket === 'mains' ? 'crawled' : bucket
+}
+
+// 后端缩略图路径 —— **所有查表都走这里**。
+// 必须与 thumbUrl() 的产物逐字节一致，否则映射表查不到（查询串顺序也算）。
+function _thumbUrlRaw(bucket, name, width, brand) {
+  return fullUrl(
+    `/api/image/${encodeURIComponent(_catOf(bucket))}/${encodeURIComponent(name)}${_qs({ brand, w: width })}`,
+  )
+}
+
+// 从「原图 URL」反解出 bucket / name / brand，供 thumbOf 复用 _thumbUrlRaw。
+// 反解失败返回 null（调用方退化为原来的字符串拼接）。
+function _parseImageUrl(url) {
+  const m = String(url).match(/\/api\/image\/([^/?#]+)\/([^/?#]+)(\?[^#]*)?/)
+  if (!m) return null
+  const cat = decodeURIComponent(m[1])
+  let brand
+  try {
+    brand = new URLSearchParams(m[3] || '').get('brand') || undefined
+  } catch {
+    brand = undefined
+  }
+  return {
+    bucket: cat === 'cat' ? 'cats' : cat === 'crawled' ? 'mains' : cat,
+    name: decodeURIComponent(m[2]),
+    brand,
+  }
+}
+
+
 async function request(path, opts = {}) {
   return fetch(fullUrl(_withAccount(path)), {
     headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
@@ -90,11 +161,67 @@ async function requestBlob(path, opts = {}) {
   return { blob, filename }
 }
 
+// 上传：**浏览器直传 COS**。
+//
+// ★ 为什么不再走后端 FormData 中转 ★（2026-09-28 实测）
+//   经服务器中转：5.61MB 用了 30.2 秒（195 KB/s）
+//   浏览器直传  ：同一文件 4.2 秒（1.39 MB/s）—— 快 7 倍
+// 用户原来的体感是「上传不了」：其实后端每次都是 200 成功，只是几 MB 的图要等半分钟，
+// 而界面只有一个没有进度的「正在上传…」，看起来就像卡死。
+// 现在流程：要 PUT 直链 → 逐张直传 COS → confirm 登记。
+// **返回结构与原来的 FormData 上传完全一致**，所以所有上传调用点都不用改。
 async function upload(bucket, files /* File[] */, opts = {} /* { brand } */) {
-  const fd = new FormData()
-  for (const f of files) fd.append('files', f, f.name || `file-${Date.now()}.png`)
-  const res = await fetch(fullUrl(`/api/upload/${bucket}${_qs({ brand: opts.brand })}`), { method: 'POST', body: fd })
-  return handle(res)
+  const list = Array.from(files || [])
+  if (!list.length) {
+    return { bucket, saved: [], skipped: [], total: 0, savedCount: 0 }
+  }
+
+  // 1) 取直链。后端在这一步就定好最终文件名（含重名处理），前端照用即可。
+  const pre = await request(`/api/upload-presign${_qs({ brand: opts.brand })}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      bucket,
+      brand: opts.brand,
+      files: list.map((f) => ({ name: f.name || '', size: f.size || 0 })),
+    }),
+  })
+  const items = Array.isArray(pre?.items) ? pre.items : []
+  const preSkipped = Array.isArray(pre?.skipped) ? pre.skipped : []
+  if (!items.length) {
+    // 全被后端拒了（扩展名不支持 / 超过 20MB）→ 按旧结构返回，让调用方正常提示
+    return { ...pre, saved: [], savedCount: 0, total: list.length, skipped: preSkipped }
+  }
+
+  // 2) 逐张直传。串行、单张失败不中断整批（一张传不上去不该让其余的白做）。
+  const done = []
+  for (const it of items) {
+    const f = list[it.index]
+    if (!f) continue
+    try {
+      const r = await fetch(it.url, { method: 'PUT', body: f })
+      if (r.ok) done.push({ name: it.finalName, key: it.key })
+    } catch (e) {
+      /* 失败的留到最后统一统计，不打断其余文件 */
+    }
+  }
+
+  // 3) 登记：后端校验对象确实在 COS 上，并把它们取回本地（后续缩略图/合成都基于本地文件）
+  if (!done.length) {
+    return {
+      bucket,
+      saved: [],
+      skipped: [...preSkipped, ...items.map((i) => ({ name: i.name, reason: '直传失败' }))],
+      total: list.length,
+      savedCount: 0,
+      brand: opts.brand,
+    }
+  }
+  const conf = await request(`/api/upload-confirm${_qs({ brand: opts.brand })}`, {
+    method: 'POST',
+    body: JSON.stringify({ bucket, brand: opts.brand, items: done }),
+  })
+  const confSkipped = Array.isArray(conf?.skipped) ? conf.skipped : []
+  return { ...conf, skipped: [...preSkipped, ...confSkipped], total: list.length }
 }
 
 export const api = {
@@ -106,13 +233,23 @@ export const api = {
   brands: () => request('/api/brands'),
   // bucket: cats | mains (=crawled) | synthesized
   imageUrl(bucket, name, opts = {} /* { brand } */) {
-    const cat = bucket === 'cats' ? 'cat' : bucket === 'mains' ? 'crawled' : bucket
-    return fullUrl(`/api/image/${encodeURIComponent(cat)}/${encodeURIComponent(name)}${_qs({ brand: opts.brand })}`)
+    return fullUrl(`/api/image/${encodeURIComponent(_catOf(bucket))}/${encodeURIComponent(name)}${_qs({ brand: opts.brand })}`)
   },
-  // 生成缩略图 URL，列表视图用（默认宽度 300px）
-  thumbUrl(bucket, name, width = 300, opts = {} /* { brand } */) {
-    const cat = bucket === 'cats' ? 'cat' : bucket === 'mains' ? 'crawled' : bucket
-    return fullUrl(`/api/image/${encodeURIComponent(cat)}/${encodeURIComponent(name)}${_qs({ brand: opts.brand, w: width })}`)
+  // 生成缩略图 URL（默认 W_ICON=480；见文件上方「缩略图直链映射表」的档位归一说明）。
+  //
+  // 若该 URL 的 COS 直链已在映射表里（列表接口 ?thumbs= 顺带签好的），直接返回直链 ——
+  // 浏览器于是跳过「先连服务器拿 302」那次跨境往返（约 0.8s/张）。
+  thumbUrl(bucket, name, width = W_ICON, opts = {} /* { brand } */) {
+    const u = _thumbUrlRaw(bucket, name, width, opts.brand)
+    return _directOf(u) || u
+  },
+  // 丢弃某个缩略图的直链，并返回后端路径。
+  // 用途：COS 预签名直链有效期 6 小时，超时后访问会 403；<img> 的 onError 里应调用本函数
+  // 回退到「后端路径」——后端会 302 到新签名、或就地生成，是一条永远不会 403 的兜底路径。
+  dropThumbDirect(bucket, name, width = W_ICON, opts = {}) {
+    const raw = _thumbUrlRaw(bucket, name, width, opts.brand)
+    _thumbDirect.delete(raw)
+    return raw
   },
   // 把「已经拼好的图片 URL」就地转成缩略图 URL —— 供列表 / 网格 / 卡片等小尺寸显示使用。
   //
@@ -122,11 +259,17 @@ export const api = {
   //
   // 使用边界（重要）：**只用于显示**。下载（a.href）、大图预览、提交给后端的参考图路径
   // 一律继续用原图 URL，切勿用本函数，否则会牺牲成品质量。
-  thumbOf(url, width = 480) {
+  thumbOf(url, width = W_ICON) {
     if (!url || typeof url !== 'string') return url || ''
     if (!url.includes('/api/image/')) return url // COS 直链 / data URL / blob 原样返回
     if (/[?&]w=\d/.test(url)) return url // 已带 w 参数，避免重复叠加
-    return url + (url.includes('?') ? '&' : '?') + 'w=' + width
+    // 用 _thumbUrlRaw 重算（而不是简单拼 &w=）：只有查询串的拼法与 thumbUrl 完全一致，
+    // 才能命中列表接口签好的直链映射。反解不出 bucket/name 时退回字符串拼接。
+    const p = _parseImageUrl(url)
+    const u = p
+      ? _thumbUrlRaw(p.bucket, p.name, width, p.brand)
+      : url + (url.includes('?') ? '&' : '?') + 'w=' + width
+    return _directOf(u) || u
   },
   // 与 imageUrl 相同，但返回 Promise 用于需要鉴权/签名/回退的场景
   async resolveImageUrl(bucket, name, opts = {}) {
@@ -150,7 +293,29 @@ export const api = {
   },
   health: () => request('/api/health'),
   config: () => request('/api/config'),
-  images: (bucket, opts = {}) => request(`/api/images/${bucket}${_qs({ brand: opts.brand })}`, { cache: 'no-store' }),
+  // 图库列表。默认顺带把最前面几张图的**缩略图 COS 直链**一起签回来（见文件上方映射表说明）——
+  // 这些图随后渲染时会直接指向 COS，省掉逐张「先连服务器拿 302」的跨境往返。
+  // opts.thumbWidths 可指定档位；传 null 关闭预热（列表响应会小一些）。
+  images: async (bucket, opts = {}) => {
+    const widths = opts.thumbWidths === null
+      ? []
+      : (Array.isArray(opts.thumbWidths) && opts.thumbWidths.length ? opts.thumbWidths : [W_ICON])
+    const d = await request(
+      `/api/images/${bucket}${_qs({ brand: opts.brand, thumbs: widths.length ? widths.join(',') : undefined })}`,
+      { cache: 'no-store' },
+    )
+    // 灌进映射表：键必须与 thumbUrl()/thumbOf() 算出的完全一致，否则查不到
+    if (d && d.thumbs) {
+      const at = Date.now()
+      for (const [wStr, map] of Object.entries(d.thumbs)) {
+        const w = Number(wStr)
+        for (const [name, link] of Object.entries(map || {})) {
+          if (link) _thumbDirect.set(_thumbUrlRaw(bucket, name, w, opts.brand), { url: link, at })
+        }
+      }
+    }
+    return d
+  },
   // NanoBanana 模型枚举（含 displayName/creditsCost/tags）
   models: () => request('/api/models'),
   // 查询 NanoBanana 账户剩余积分
@@ -543,10 +708,14 @@ export const api = {
 
 export default api
 
-// 单次导出的文件数上限 —— **必须与后端 `_EXPORT_PRESIGN_MAX_FILES` 保持一致**。
+// 单次导出的文件数上限 —— 这是**浏览器内存**的限制，不是后端的。
 //
-// 导出已改为「后端签发 COS 预签名直链 → 浏览器直连 COS 下载」（见上面 exportPresign 的说明），
-// 后端不再转发文件、只花几毫秒签 URL，所以上限可以放得很宽，
-// 不再需要为「打包耗尽服务器内存/CPU」设防（那种事故 2026-09-23 发生过一次）。
-// 这里仍设一个上限，只是为了别让浏览器一次性排几百个下载任务。
-export const EXPORT_MAX_FILES = 300
+// 导出流程：后端签发 COS 直链（毫秒级、零带宽）→ 浏览器直连 COS 取图
+// → **在浏览器本地打包 zip**（见 utils/packZip.js）。
+// 打包时内存约等于「原始数据 + zip 输出」≈ 总大小的 2 倍，而单张套图约 8MB：
+//   60 张 ≈ 480MB 数据 ≈ 峰值约 1GB 内存 —— Chrome 能稳住的量级；
+//   300 张 ≈ 2.4GB 数据 ≈ 峰值约 5GB —— **标签页会直接崩溃**，所以这个值不能随便调大。
+// 超限时前端会提示「请分批导出」。
+// 注意后端另有一个 `_EXPORT_PRESIGN_MAX_FILES`（300），那是签发接口自身的安全上限，
+// 它只签 URL、不吃内存，两者语义不同、不需要一致。
+export const EXPORT_MAX_FILES = 60

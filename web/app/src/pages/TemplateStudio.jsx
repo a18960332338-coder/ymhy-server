@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import api, { EXPORT_MAX_FILES } from '../api'
+import api, { EXPORT_MAX_FILES, W_ICON } from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
+import { downloadAsZip } from '../utils/packZip'
 import { Button as HeroButton, Modal as HeroModal, Spinner, ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import { HeroInput, HeroSlider, HeroSelect, HeroTextArea } from '../components/ui'
 import {
@@ -24,8 +25,10 @@ const CROP_RESULTS_BUCKET = 'crops'          // 跨境裁切结果
 const loadPickerBuckets = async (brand) =>
   mapCategoryImages(await loadGalleryCategories(brand), (bucket, im) => ({
     name: im.name,
-    // 列表用 300px 缩略图（性能：上百张原图同时加载会卡死）
-    url: api.thumbUrl(bucket, im.name, 300, { brand }),
+    // 列表用缩略图（性能：上百张原图同时加载会卡死）。
+    // 宽度用 W_ICON —— 与全站其余缩略图同档，才能命中列表接口签好的 COS 直链
+    // （原先这里单独用 300，属于「自己的档位」，永远命中不了预热，白走一次 302）。
+    url: api.thumbUrl(bucket, im.name, W_ICON, { brand }),
     // 确认合成 / 裁切时用原图（保证输出质量）
     fullUrl: api.imageUrl(bucket, im.name, { brand }),
     mtime: im.mtime,
@@ -169,11 +172,10 @@ function downloadAll(items, prefix) {
   Toast.success(`开始下载 ${items.length} 张图`)
 }
 
-// 批量导出：后端签发 COS 预签名直链，浏览器**直连 COS** 逐张下载。
-// ★ 不要再改回「后端打包 zip」★（2026-09-24）：服务器上行只有 ~20KB/s，
-// 打包的 zip 在传输时会一直卡在「打包中」（用户实际遇到的现象）；
-// 直链实测快约 220 倍。
-async function exportLibraryZip(names, bucket, brand, zipName) {
+// 批量导出：后端签发 COS 直链 → 浏览器直连 COS 取图 → **在本地打包成 zip** 再保存。
+// ★ 不要再改回「后端打包 zip」★（2026-09-24 事故）：服务器上行只有 ~20KB/s，
+// 96MB 的包从服务器发出去要 85 分钟，界面会永远卡在「打包中」。详见 utils/packZip.js。
+async function exportLibraryZip(names, bucket, brand, zipName, onProgress) {
   if (!names || !names.length) return
   if (names.length > EXPORT_MAX_FILES) {
     Toast.warn(`单次最多导出 ${EXPORT_MAX_FILES} 张，已选 ${names.length} 张，请分批导出`)
@@ -183,16 +185,17 @@ async function exportLibraryZip(names, bucket, brand, zipName) {
     const r = await api.exportPresign({ bucket, names, brand })
     const list = Array.isArray(r?.items) ? r.items : []
     if (!list.length) { Toast.warn('没有可导出的文件'); return }
-    for (let i = 0; i < list.length; i++) {
-      const it = list[i]
-      const a = document.createElement('a')
-      a.href = it.url
-      a.download = it.name
-      document.body.appendChild(a); a.click(); a.remove()
-      // 逐张间隔：避免浏览器把多次下载合并成一次询问
-      await new Promise(res => setTimeout(res, 350))
-    }
-    Toast.success(`已开始下载 ${list.length} 张图`)
+    const d = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    const ts = `${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+    const zipItems = list.map((it, i) => ({
+      url: it.url,
+      name: it.name,
+      outName: `${pad(i + 1)}_${it.name}`,
+    }))
+    const out = await downloadAsZip(zipItems, `${zipName}_${list.length}张_${ts}.zip`,
+                                    onProgress || (() => {}))
+    Toast.success(`已导出 ${out.count} 张图（${(out.size / 1048576).toFixed(1)}MB）`)
   } catch (e) {
     Toast.error('导出失败：' + (e?.message || e))
   }

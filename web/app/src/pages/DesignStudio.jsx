@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import api, { EXPORT_MAX_FILES } from '../api'
+import api, { EXPORT_MAX_FILES, W_ICON, W_LARGE } from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
+import { downloadAsZip } from '../utils/packZip'
 import bananaIcon from '../assets/banana-icon.png'
 import { TemplateResultLibrary } from './TemplateStudio'
 import { lastModelKey } from '../accountKeys'
@@ -352,9 +353,25 @@ function Tooltip({ content, children }) {
 const BUCKET_MAIN = 'mains'
 const BUCKET_CAT = 'cats'
 const BUCKET_OUT = 'synthesized'
-// 网格缩略图宽度：列表里可能有上百张图，统一走 ?w= 缩略图（后端 Pillow 生成并长期缓存）。
-// 220px 的格子配 480px 资源足够 2x 屏清晰，单图从 ~MB 级降到几十 KB。
-const GRID_THUMB_W = 480
+// 缩略图宽度：**全站归一到 W_ICON(480) / W_LARGE(960) 两档**（见 api.js 顶部的档位说明）。
+//
+// 为什么要归一（2026-09-28）：列表接口会顺带把最前面几张图的 COS 直链签回来，
+// 让 <img> 跳过「先连服务器拿 302」那次跨境往返（实测 ~0.8s/张）。
+// 而**档位越多，预热命中率越低** —— 原先这里 120/480/720/960 四档并存，
+// 一档预热只能覆盖约 1/4 的显示场景；归一后绝大多数图都能直接命中直链。
+// 网格缩略图：列表里可能有上百张图，统一走 ?w= 缩略图（后端 Pillow 生成并长期缓存），
+// 单图从 ~MB 级降到几十 KB。
+const GRID_THUMB_W = W_ICON
+
+// ★ 预览区也必须走缩略图（2026-09-28 修复）★
+// 现象：用户反馈「每次加载都很慢，图片出来一半是黑的」。
+// 原因：主图/猫咪/合成结果这些**预览位**的 <SmartImg> 没有传 width，
+// 于是走了 api.imageUrl（原图 ≈6MB）—— 而它们实际只显示 40~300px。
+// 在 20KB/s 的服务器带宽下，6MB 要 5 分钟，浏览器边下边画，就成了「上半张有图、下半张黑」。
+// 现在按实际显示尺寸给缩略图宽度：
+const PREVIEW_THUMB_W = W_ICON   // 主图 / 猫咪预览（显示区仅 100~300px，480 绰绰有余）
+const RESULT_THUMB_W = W_LARGE   // 合成结果大预览（用户会看细节，保留 960）
+const MICRO_THUMB_W = W_ICON     // 40px 级小图标（列表左侧缩略块）—— 见下方 SmartImg 的说明
 
 const BUCKET_LABEL = (brand) => {
   const isSofa = brand === 'sofawithcat'
@@ -700,7 +717,13 @@ function ImageGrid({ bucket, list, selected, onToggle, onDeleted, brand, addTile
 }
 
 // ---------- SmartImg ----------
-function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize, width, ...rest }) {
+// width 默认 W_ICON(480) —— ★ 这是刻意的防御性默认值，别改回「无默认」★
+// 原先 width 没有默认值：漏传就静默退回 api.imageUrl（原图 ≈6MB），而且**不报错、只是慢**，
+// 属于最难发现的一类 bug（2026-09-28 就踩了：5 处预览位全漏传，一张预览要 125 秒，
+// 还把浏览器同域 6 个并发连接占满，导致整页所有图片都在排队）。
+// 原则：让「忘记传参数」退化成「用个中等缩略图」，而不是退化成「拉全尺寸原图」。
+// 确实需要原图的地方（大图查看/提交参考图/canvas 合成）请显式传 width={null}。
+function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize, width = W_ICON, ...rest }) {
   // width 有值时走 ?w= 缩略图接口：列表/网格里动辄上百张图，逐个拉原图（~MB 级）会把
   // 浏览器同域连接池占满，导致其它请求（含弹窗、接口）排队几十秒。缩略图同样能拿到正确宽高比。
   const mkUrl = useCallback(
@@ -709,6 +732,7 @@ function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize
   )
   const [src, setSrc] = useState(() => mkUrl(name))
   const [tried, setTried] = useState(false)
+  const [directDropped, setDirectDropped] = useState(false)
   const bucketRef = useRef(bucket)
   const nameRef = useRef(name)
   useEffect(() => {
@@ -716,6 +740,7 @@ function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize
       bucketRef.current = bucket
       nameRef.current = name
       setTried(false)
+      setDirectDropped(false)
       setSrc(mkUrl(name))
     }
   }, [bucket, name, brand, mkUrl])
@@ -728,6 +753,16 @@ function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize
     }
   }, [name, onNaturalSize])
   const onImgError = useCallback((e) => {
+    // ① 当前是 COS 直链却加载失败（多为预签名过期，或预热时对象尚未就绪）→
+    //    丢弃直链、回退到后端 /api/image 路径。**这一步不能省**：
+    //    既避免 403 时图片直接空白，也让「后端路径」成为永远可用的兜底。
+    const isDirect = !String(src).includes('/api/image/')
+    if (isDirect && !directDropped) {
+      setDirectDropped(true)
+      setSrc(api.dropThumbDirect(bucket, name, width, { brand }))
+      return
+    }
+    // ② 后端路径也失败 → 按扩展名再试几轮（沿用原有逻辑）
     if (tried) { onError && onError(e); return }
     setTried(true)
     const raw = mkUrl(name)
@@ -749,7 +784,7 @@ function SmartImg({ bucket, name, alt = '', style, onError, brand, onNaturalSize
         setSrc(base + cand[idx++])
       }
     }
-  }, [bucket, name, onError, tried, brand, mkUrl])
+  }, [bucket, name, onError, tried, directDropped, src, brand, width, mkUrl])
   return <img src={src} alt={alt} style={style} onError={onImgError} onLoad={handleLoad} {...rest} />
 }
 
@@ -777,7 +812,7 @@ function CanvasPreview({ mainName, catName, outputName, loading = false, stageSt
     return (
       <Card variant="secondary" className="relative overflow-hidden">
         <SmartImg
-          bucket={BUCKET_OUT} name={outputName} alt="合成结果" brand={brand}
+          bucket={BUCKET_OUT} name={outputName} alt="合成结果" brand={brand} width={RESULT_THUMB_W}
           style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
         />
         {/* 底部浮层：HeroUI Chip + IconButton，替代原自定义 overlay-* */}
@@ -872,7 +907,7 @@ function CanvasPreview({ mainName, catName, outputName, loading = false, stageSt
             </Card.Header>
             <Card.Content className="grid aspect-square place-items-center bg-(--background) p-2">
               <SmartImg
-                bucket={BUCKET_MAIN} name={mainName} alt="main" brand={brand}
+                bucket={BUCKET_MAIN} name={mainName} alt="main" brand={brand} width={PREVIEW_THUMB_W}
                 style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
               />
             </Card.Content>
@@ -886,7 +921,7 @@ function CanvasPreview({ mainName, catName, outputName, loading = false, stageSt
             </Card.Header>
             <Card.Content className="grid aspect-square place-items-center bg-(--background) p-2">
               <SmartImg
-                bucket={BUCKET_CAT} name={catName} alt="cat" brand={brand}
+                bucket={BUCKET_CAT} name={catName} alt="cat" brand={brand} width={PREVIEW_THUMB_W}
                 style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
               />
             </Card.Content>
@@ -915,7 +950,7 @@ function MultiPreviewGrid({ mains = [], cats = [], brand, pairStrategy = 'zip' }
       className="relative aspect-square overflow-hidden rounded-(--radius-xl) border border-(--border) bg-(--background)"
     >
       <SmartImg
-        bucket={bucket} name={name} alt="" brand={brand}
+        bucket={bucket} name={name} alt="" brand={brand} width={GRID_THUMB_W}
         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
       />
       {more > 0 && (
@@ -1150,7 +1185,7 @@ function BatchResults({ pairs, brand }) {
               <div className="h-10 w-10 shrink-0 overflow-hidden rounded-(--radius-md) bg-(--background)">
                 {r.name && r.status !== 'fail'
                   ? <SmartImg
-                      bucket={BUCKET_OUT} name={r.name} alt="" brand={brand}
+                      bucket={BUCKET_OUT} name={r.name} alt="" brand={brand} width={MICRO_THUMB_W}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                   : (
@@ -2088,6 +2123,7 @@ function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon 
   const [delConfirm, setDelConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [exportStep, setExportStep] = useState('')  // 导出进度文案（如「下载中 3/12」）
 
   const toggle = (name) => setSelected(prev => {
     const n = new Set(prev)
@@ -2104,6 +2140,7 @@ function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon 
       return
     }
     setExporting(true)
+    setExportStep('')
     try {
       // 本轮唯一批次戳（秒级），保证跨轮导出文件名不重复
       const d = new Date()
@@ -2111,34 +2148,31 @@ function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon 
       const ts = `${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
       const br = brand || 'cloudsleepgarden'
 
-      // ★ 走 COS 直链逐张下载，不要再改回「后端打包 zip」★（2026-09-24）
-      // 服务器上行带宽只有 ~20KB/s：12 张图打成的 zip 有 96MB，走服务器要传 85 分钟，
-      // 界面会永远停在「打包中」（用户实际遇到的现象，Nginx 日志显示只发出了 128KB）。
-      // 直链下浏览器直连 COS，实测快约 220 倍（7MB 从 6 分钟变成 1.7 秒）。
+      // 1) 后端只签发 COS 直链（毫秒级、零带宽）
       const r = await api.exportPresign({ bucket: BUCKET_OUT, names, brand: br })
       const list = Array.isArray(r?.items) ? r.items : []
       if (!list.length) { Toast.warn('没有可导出的文件'); return }
-      Toast.info(`开始下载 ${list.length} 张${label}…`)
-      for (let i = 0; i < list.length; i++) {
-        const it = list[i]
+      if (list.length >= 20) {
+        Toast.info(`共 ${list.length} 张，正在逐张下载并打包，请保持页面打开`)
+      }
+      // 2) 浏览器直连 COS 取图 + **在本地打包**成 zip 再保存。
+      //    不能让后端打包：服务器上行只有 ~20KB/s，96MB 的包要传 85 分钟，
+      //    界面会永远停在「打包中」（2026-09-24 真实事故，详见 utils/packZip.js）。
+      const zipItems = list.map((it, i) => {
         const seq = String(i + 1).padStart(2, '0')
         const m = it.name.match(/\.(png|jpe?g|webp|gif|svg)$/i)
         const ext = m ? m[0] : '.png'
-        const out = `${ts}_${seq}_${it.name.slice(0, -ext.length)}${ext}`
-        const a = document.createElement('a')
-        a.href = it.url
-        a.download = out
-        document.body.appendChild(a); a.click(); a.remove()
-        // 逐张间隔：避免浏览器把多次下载合并成一次询问，也避免瞬间开一堆连接
-        await new Promise(res => setTimeout(res, 350))
-      }
+        return { url: it.url, name: it.name, outName: `${ts}_${seq}_${it.name.slice(0, -ext.length)}${ext}` }
+      })
+      const out = await downloadAsZip(zipItems, `${label}_${list.length}张_${ts}.zip`, setExportStep)
       const skippedN = Array.isArray(r?.skipped) ? r.skipped.length : 0
-      Toast.success(`已开始下载 ${list.length} 张${label}${skippedN ? `（${skippedN} 张跳过）` : ''}`)
+      Toast.success(`已导出 ${out.count} 张${label}（${(out.size / 1048576).toFixed(1)}MB）${skippedN ? `，${skippedN} 张跳过` : ''}`)
       setSelected(new Set())
     } catch (e) {
       Toast.error('导出失败：' + (e?.message || e))
     } finally {
       setExporting(false)
+      setExportStep('')
     }
   }
 
@@ -2171,7 +2205,7 @@ function LibSection({ items = [], brand, label = '图片', emptyText, emptyIcon 
         {selected.size > 0 && (
           <>
             <HeroButton variant="primary" size="sm" className="shrink-0" onPress={doExport} isDisabled={exporting}>
-              <Icon name="download" size={13} /> {exporting ? (selected.size > 5 ? '打包中…' : '导出中…') : `导出（${selected.size}）`}
+              <Icon name="download" size={13} /> {exporting ? (exportStep || '导出中…') : `导出（${selected.size}）`}
             </HeroButton>
             <HeroButton variant="danger" size="sm" className="shrink-0" onPress={() => setDelConfirm(true)} isDisabled={deleting}>
               <Icon name="delete" size={13} /> 删除（{selected.size}）
