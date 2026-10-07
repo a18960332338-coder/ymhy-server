@@ -96,3 +96,8 @@
 - 仓库2（app.remote.py，ymhy-server-backup）：本次 add -A 时无源码改动；03:00 那次执行已生成当日提交 b8b5c95 "backup 2026-10-07"。本次发现仓库2 自己的 automation memory.md 留有未提交的 5 行追加，遂 commit 31deff0 "backup 2026-10-07"，push 仍被 GitHub Push Protection 拒绝（GH013 rule violations），拦截点仍为历史提交 0779abf：腾讯云 Secret ID（_cos_probe.py:4、_write_env.py:20）、DeepSeek API Key（app.py:160、app.py.bak_cos:160）、VolcEngine Ark API Key（app.py:165、app.py.bak_cos:165）。按约定未绕过（未 -f、未 allow secret），本地保留。
 - 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥；本地已累计 18 个未推送提交（0779abf…31deff0），远端仍停留在 0779abf 之前。
 - 结果：仓库1 有提交并推送（成功）；仓库2 有本地提交但推送失败（同一密钥拦截）。
+
+## 2026-10-08 03:32
+- 仓库1（前端+引擎，ymhy-server）：首次 add -A 无源码改动（NO_CHANGES，HEAD=f004944 "backup 2026-10-07"）；随后追加本 memory.md 产生改动，重跑 backup 命令提交并 push。
+- 仓库2（app.remote.py，ymhy-server-backup）：无源码改动，跳过（NO_CHANGES，HEAD=31deff0 "backup 2026-10-07"，ahead 18），本次未做 push 尝试；随后仓库2 自己的 automation memory.md 追加产生改动，按 backup 命令提交并尝试 push（预期仍被 Push Protection 拒绝）。
+- 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥（腾讯云 Secret ID / DeepSeek API Key / VolcEngine Ark API Key）；本地未推送提交持续累积，远端仍停留在 0779abf 之前。
