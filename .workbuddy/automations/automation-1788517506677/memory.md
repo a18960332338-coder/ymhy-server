@@ -101,3 +101,4 @@
 - 仓库1（前端+引擎，ymhy-server）：首次 add -A 无源码改动（NO_CHANGES，HEAD=f004944 "backup 2026-10-07"）；随后追加本 memory.md 产生改动，重跑 backup 命令提交并 push。
 - 仓库2（app.remote.py，ymhy-server-backup）：无源码改动，跳过（NO_CHANGES，HEAD=31deff0 "backup 2026-10-07"，ahead 18），本次未做 push 尝试；随后仓库2 自己的 automation memory.md 追加产生改动，按 backup 命令提交并尝试 push（预期仍被 Push Protection 拒绝）。
 - 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥（腾讯云 Secret ID / DeepSeek API Key / VolcEngine Ark API Key）；本地未推送提交持续累积，远端仍停留在 0779abf 之前。
+- 结果：仓库1 commit 30f6d1c "backup 2026-10-08"（1 文件 +5），push 成功（f004944..30f6d1c）；仓库2 commit 4addec0 "backup 2026-10-08"（1 文件 +6），push 被 GH013 拒绝（拦截点仍为历史提交 0779abf），未绕过，本地保留，累计 ahead 19。
