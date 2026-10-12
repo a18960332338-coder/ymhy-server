@@ -116,7 +116,7 @@
 - 结果：仓库1 仅 memory 追加类改动；仓库2 无改动。
 
 ## 2026-10-13 03:00
-- 仓库1（前端+引擎，ymhy-server）：无改动，跳过（NO_CHANGES，HEAD=8f6b57f "backup 2026-10-10"，ahead 0）。
-- 仓库2（app.remote.py，ymhy-server-backup）：无改动，跳过（NO_CHANGES，HEAD=eb7d7a9 "backup 2026-10-11"，ahead 21）。
-- 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥；本地已累计 21 个未推送提交（0779abf…eb7d7a9），远端仍停留在 3705136。
-- 结果：两个仓库均无改动，本次无提交、无推送、无错误。
+- 仓库1（前端+引擎，ymhy-server）：首次 add -A 无源码改动（NO_CHANGES，HEAD=8f6b57f "backup 2026-10-10"，ahead 0）；随后追加本 memory.md 产生改动，重跑 backup 命令，commit e216cef "backup 2026-10-13"（1 文件 +6），push 成功（8f6b57f..e216cef）。
+- 仓库2（app.remote.py，ymhy-server-backup）：无改动，跳过（NO_CHANGES，HEAD=eb7d7a9 "backup 2026-10-11"，ahead 21），本次未做 push 尝试。
+- 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥（腾讯云 Secret ID / DeepSeek API Key / VolcEngine Ark API Key）；本地已累计 21 个未推送提交（0779abf…eb7d7a9），远端仍停留在 3705136。
+- 结果：仓库1 仅 memory 追加类改动（已提交并推送）；仓库2 无改动。
