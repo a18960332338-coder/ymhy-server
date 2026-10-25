@@ -166,3 +166,9 @@
 - 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥（腾讯云 Secret ID / DeepSeek API Key / VolcEngine Ark API Key）；本地已累计 31 个未推送提交，远端仍停留在 3705136。
 - 备注：仓库1 的 push 进程在后台长时间未返回输出，经 git status / rev-list 核验实际推送成功（ahead 0），属进程未正常退出，非推送失败。
 - 结果：仓库1 有提交并推送成功；仓库2 无改动。
+
+## 2026-10-26 03:27
+- 仓库1（前端+引擎，ymhy-server）：无改动，跳过（NO_CHANGES），未做 push 尝试。
+- 仓库2（app.remote.py，ymhy-server-backup）：无改动，跳过（NO_CHANGES），未做 push 尝试。
+- 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥（腾讯云 Secret ID / DeepSeek API Key / VolcEngine Ark API Key）；本地未推送提交仍累计约 31 个，远端停留在 3705136。
+- 结果：两个仓库均无改动，未提交、未推送、无错误。
