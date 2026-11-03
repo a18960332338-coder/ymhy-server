@@ -430,6 +430,13 @@ const SIZE_PRESETS = [
   { label: '3:4 HD', w: 1500, h: 2000 },
 ]
 
+// 清晰度档位（生图分辨率，与画布尺寸独立）
+const RESOLUTION_OPTIONS = [
+  { label: '1K 标准', value: '1K' },
+  { label: '2K 高清', value: '2K' },
+  { label: '4K 超清', value: '4K' },
+]
+
 const SORT_OPTIONS = [
   { value: 'mtime', label: '按时间' },
   { value: 'name', label: '按名称' },
@@ -1294,6 +1301,15 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
   }, [])
   const currentModel = useMemo(() => modelList.find(m => String(m.id) === String(model)), [modelList, model])
 
+  // 清晰度档位（1K/2K/4K）：localStorage 记忆上次选择
+  const [resolution, setResState] = useState(() => {
+    try { return window.localStorage.getItem('tk:last-resolution') || '1K' } catch { return '1K' }
+  })
+  const setResolution = useCallback((r) => {
+    setResState(r)
+    try { window.localStorage.setItem('tk:last-resolution', String(r)) } catch {}
+  }, [])
+
   // 切换品牌时：把提示词重置为该品牌的默认文案（避免家纺 vs 沙发套串词）
   useEffect(() => {
     setPrompt(DEFAULT_PROMPT(brand))
@@ -1415,6 +1431,7 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
         main_image: previewMain, cat_image: previewCat,
         prompt, width, height,
         model, brand,
+        resolution,
       })
       // 消耗了积分 → 立即刷新顶部积分显示
       window.dispatchEvent(new Event('app:refresh-credits'))
@@ -1526,6 +1543,7 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
         prompt, width, height,
         pair_strategy: pairStrategy,
         model, brand,
+        resolution,
       })
       setCurrentBatch(init)
       // 消耗了积分 → 立即刷新顶部积分显示
@@ -1779,9 +1797,9 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
               />
               {modelList.length > 0 && (
                 <p className="mt-1 text-[11px] leading-relaxed text-(--muted)">
-                  · 已默认选中「Nano Banana Pro」；切换模型后会自动记忆，下次打开沿用你上次选择。
+                  · 切换模型后会自动记忆，下次打开沿用你上次选择。
                   <br />
-                  · 含 2K / 4K / Pro 的模型画质更精细，消耗积分也更高，请根据实际场景选择。
+                  · 清晰度在下方「清晰度」中选择；2K / 4K 画质更精细，消耗积分也更高。
                 </p>
               )}
             </div>
@@ -1822,6 +1840,28 @@ function DesignStudio({ brand, brandsMeta, onSwitchTab, account }) {
                       onPress={() => { setWidth(p.w); setHeight(p.h) }}
                     >
                       {p.label}
+                    </HeroButton>
+                  )
+                })}
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* 清晰度（1K / 2K / 4K）：与画布尺寸独立，作用于生图分辨率 */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-(--foreground)">清晰度</span>
+              <div className="flex flex-wrap gap-1.5">
+                {RESOLUTION_OPTIONS.map(r => {
+                  const active = resolution === r.value
+                  return (
+                    <HeroButton
+                      key={r.value}
+                      size="sm"
+                      variant={active ? 'secondary' : 'outline'}
+                      onPress={() => setResolution(r.value)}
+                    >
+                      {r.label}
                     </HeroButton>
                   )
                 })}
