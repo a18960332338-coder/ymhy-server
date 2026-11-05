@@ -15,7 +15,7 @@ import {
   loadGalleryCategories, mapCategoryImages, defaultCategoryKey, DEFAULT_GALLERY_CATEGORY,
 } from '../galleryCategories'
 
-// 套图生成：左侧与豆包 Agent 对话（确认/取消按钮 + 勾选卡片），右侧生成预览区
+// 套图生成：左侧与ToAPIs Agent 对话（确认/取消按钮 + 勾选卡片），右侧生成预览区
 
 const PLATFORMS = [
   { key: 'douyin', label: '抖店',        lang: 'zh', size: '1:1' },
@@ -493,7 +493,7 @@ export default function SuiteGenerator({ brand, account }) {
         ref_image: refPath || null,
       })
       setSid(s.sid); setState(s); setChecked([]); setCancelMode(false); setCancelExtra('')
-      setStreaming(true)  // 开启 SSE 实时推送（豆包补全商品信息阶段）
+      setStreaming(true)  // 开启 SSE 实时推送（ToAPIs补全商品信息阶段）
     } catch (e) {
       setError(`开始失败：${e.message || e}`)
     } finally { setBusy(false); setStarting(false) }
@@ -523,7 +523,7 @@ export default function SuiteGenerator({ brand, account }) {
   const onGenerate = () => {
     if (!checked.length) { setError('请至少勾选一张图'); return }
     // 仅提交「真正改过」的文案：与原始 concept 相同（含仅打开看一眼就关闭）的卡片不传，
-    // 回落豆包原流程；改过的卡片走「直接用修改后文案生图」分支。
+    // 回落ToAPIs原流程；改过的卡片走「直接用修改后文案生图」分支。
     const overrides = {}
     for (const id of checked) {
       const ov = planOverrides[id]
@@ -557,7 +557,7 @@ export default function SuiteGenerator({ brand, account }) {
 
   // —— 修改提示词后重新生成 ——
   // 编辑框里永远是「中文」：后端会保存 prompt_zh（提示词的中文版），
-  // 老的/豆包直出的图只有目标语言版本，打开时按需回译一次（zh_prompt）。
+  // 老的/ToAPIs直出的图只有目标语言版本，打开时按需回译一次（zh_prompt）。
   const openPromptEditor = (it) => {
     setEditText(it.prompt_zh || '')
     setEditLoading(false)
@@ -872,7 +872,7 @@ export default function SuiteGenerator({ brand, account }) {
             return null
           })}
 
-          {/* 流式文本：豆包逐字输出 */}
+          {/* 流式文本：对话模型逐字输出 */}
           {state?.streaming_text && (
             <Bubble role="agent" rawText={state.streaming_text}>
               {state.streaming_text}

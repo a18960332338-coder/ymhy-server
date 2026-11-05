@@ -11,7 +11,7 @@ function imgSrc(u) {
   return u
 }
 
-// ── 意图路由：解析豆包的结构化输出 ──────────────────────────────
+// ── 意图路由：解析ToAPIs的结构化输出 ──────────────────────────────
 // 输出约定（三行）：
 //   意图：<chat|clarify|generate>
 //   回复：<chat/clarify 时的中文回复；generate 时留空>
@@ -140,7 +140,7 @@ function stripSessionsImages(list) {
 
 /**
  * 图片生成 —— 一级独立子功能页（AI 聊天式图片生成）
- * 流程：用户输入/参考图 → 豆包整理需求 → 套图 Agent（豆包编排 + 图片模型生图）→ 聊天流返回图片
+ * 流程：用户输入/参考图 → ToAPIs整理需求 → 套图 Agent（ToAPIs编排 + 图片模型生图）→ 聊天流返回图片
  * 全程自动推进 confirm / select，一键到底；历史会话自动存 localStorage。
  */
 export function ImageGen({ brand }) {
@@ -164,7 +164,7 @@ export function ImageGen({ brand }) {
   const [input, setInput] = useState('')
   const [pendingImages, setPendingImages] = useState([]) // data URL array
   const [loading, setLoading] = useState(false)
-  const [thinkingText, setThinkingText] = useState('')   // 豆包整理需求的流式输出（实时可见）
+  const [thinkingText, setThinkingText] = useState('')   // ToAPIs整理需求的流式输出（实时可见）
 
   // ---- 生成参数 ----
   // 模型列表从后端 /api/models 动态拉取（NanoBanana 官方实时可用图生图模型）
@@ -336,7 +336,7 @@ export function ImageGen({ brand }) {
     setLoading(true)
 
     try {
-      // 1. 豆包意图识别（流式展示，实时可见思考过程）
+      // 1. ToAPIs意图识别（流式展示，实时可见思考过程）
       setThinkingText('')
       pushMessage({ role: 'agent', content: '', thinking: true })
 
@@ -375,15 +375,15 @@ export function ImageGen({ brand }) {
         // 创建 AbortController：品牌切换 / 组件卸载时自动 abort（防止卡死）
         const ctrl = new AbortController()
         abortRef.current = ctrl
-        // 30 秒超时保险（豆包正常 2-7s；超时说明后端挂了或网络断了）
+        // 30 秒超时保险（ToAPIs正常 2-7s；超时说明后端挂了或网络断了）
         const timer = setTimeout(() => ctrl.abort(), 30000)
 
-        // 流式：豆包边写边展示，用户能实时看到思考过程（不再是一行静态 spinner）
+        // 流式：ToAPIs边写边展示，用户能实时看到思考过程（不再是一行静态 spinner）
         let acc = ''
         await api.chatStream({
           messages: chatMessages,
           system: systemPrompt,
-          model: 'doubao',
+          model: 'toapis',
           max_tokens: 500,
           temperature: 0.4,
           brand,

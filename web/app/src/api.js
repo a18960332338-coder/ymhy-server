@@ -332,12 +332,12 @@ export const api = {
       video_credits: pick('video_credits', Math.ceil(pick('credits', 0) * 0.3)),
       llm_credits: pick('llm_credits', null),
       llm_balance_cny: (() => { const v = r?.llm_balance_cny ?? r?.data?.llm_balance_cny ?? null; return typeof v === 'number' ? v : null; })(),
-      llm_model: r?.llm_model ?? r?.data?.llm_model ?? 'deepseek-v4-flash',
+      llm_model: r?.llm_model ?? r?.data?.llm_model ?? 'kimi-k2.5',
       degraded: !!r?.degraded,
       message: r?.message || ''
     };
   },
-  // 豆包（火山方舟 Ark）连通性 / 余额探针
+  // ToAPIs 对话模型连通性 / 余额探针（路径 /api/doubao/status 为历史命名，保留兼容）
   doubaoStatus: async () => {
     try {
       const r = await request('/api/doubao/status');
@@ -351,14 +351,14 @@ export const api = {
         needs_ak_sk: !!r?.needs_ak_sk,
       };
     } catch (e) {
-      return { ok: false, model: '', latency_ms: null, message: '豆包状态接口调用失败', balance: null, balance_source: null, needs_ak_sk: false };
+      return { ok: false, model: '', latency_ms: null, message: '对话模型状态接口调用失败', balance: null, balance_source: null, needs_ak_sk: false };
     }
   },
   upload,
   deleteImg: (bucket, name, opts = {}) =>
     request(`/api/delete/${bucket}/${encodeURIComponent(name)}${_qs({ brand: opts.brand })}`, { method: 'POST' }),
 
-  // ===== 套图生成（Suite Generator · 豆包 function-calling Agent）=====
+  // ===== 套图生成（Suite Generator · ToAPIs function-calling Agent）=====
   // 开启会话：body = { brand, platform, language, size, description, ref_image }
   suiteStart: (body) =>
     request('/api/suite/start', { method: 'POST', body: JSON.stringify(body) }),
@@ -612,7 +612,7 @@ export const api = {
 
   deepseekChat: async ({ prompt, system, max_tokens = 2000, temperature = 0.3 } = {}) => request('/api/llm/deepseek/chat', { method: 'POST', body: JSON.stringify({ prompt, system, max_tokens, temperature }) }),
 
-  // 通用多轮对话接口（AI 对话页）；model: 'doubao'(默认) | 'deepseek' | 具体 Model/Endpoint ID；images: 多模态图片 data URL / 本机图库 http url
+  // 通用多轮对话接口（AI 对话页）；model: 'toapis'(默认) | 'deepseek' | 具体 ToAPIs 模型 id；images: 多模态图片 data URL / 本机图库 http url
   chat: async ({ messages, system, max_tokens = 2000, temperature = 0.7, stream = false, model, images, brand } = {}) => request('/api/chat', {
     method: 'POST',
     body: JSON.stringify({ messages, system, max_tokens, temperature, stream, model, images, brand }),

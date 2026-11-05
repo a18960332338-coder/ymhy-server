@@ -19,8 +19,8 @@ const presetStore = () => aiPresetKey()
 const AI_NAME = '云眠AI'
 
 const MODEL_OPTIONS = [
-  { key: 'doubao', label: '豆包 Doubao', desc: '默认 · Agent Plan' },
-  { key: 'deepseek', label: 'DeepSeek-V4-Flash', desc: '备用 · 快' },
+  { key: 'toapis', label: 'Kimi K2.5', desc: '默认 · ToAPIs' },
+  { key: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', desc: '备用 · ToAPIs' },
 ]
 
 function genId() {
@@ -270,7 +270,7 @@ export default function AiChat({ brand, account }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [typing, setTyping] = useState(false)
-  const [model, setModel] = useState('doubao')
+  const [model, setModel] = useState('toapis')
   const [showSidebar, setShowSidebar] = useState(true)
   const [system, setSystem] = useState(() => getBrandAI(brand).defaultSystem)
   const [showSystem, setShowSystem] = useState(false)
@@ -1140,7 +1140,7 @@ export default function AiChat({ brand, account }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, padding: '0 16px' }}>
               <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
-                由 {model === 'deepseek' ? 'DeepSeek v4-flash' : '豆包（火山方舟 Ark）'} 提供支持 · 对话仅在本地与后端间传输
+                由 ToAPIs · {MODEL_OPTIONS.find(m => m.key === model)?.label || MODEL_OPTIONS[0].label} 提供支持 · 对话仅在本地与后端间传输
               </div>
               {loading && (
                 <HeroButton variant="ghost" color="danger" size="sm" onPress={() => { try { abortCtrl?.abort() } catch {} setLoading(false); setTyping(false) }}>

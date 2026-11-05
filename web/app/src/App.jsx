@@ -216,7 +216,7 @@ const TAB_KEY_REPLICATE = 'video_replicate' // 复刻视频
 const TAB_KEY_TEMPLATE = 'template'  // 模版合成
 const TAB_KEY_IMGGEN = 'image_gen'   // 图片生成（AI 聊天式生图，一级独立页）
 const TAB_KEY_CHAT = 'ai_chat'      // AI 大模型对话
-const TAB_KEY_SUITE = 'suite_gen'   // 套图生成（豆包 function-calling Agent）
+const TAB_KEY_SUITE = 'suite_gen'   // 套图生成（ToAPIs function-calling Agent）
 
 // 主导航分组（icon 使用 iconpark 图标名）
 const NAV_GROUPS = [
@@ -431,7 +431,7 @@ export default function App() {
   const [llmBalanceCny, setLlmBalanceCny] = useState(null)
   const [creditsMessage, setCreditsMessage] = useState('')
   const [creditsDegraded, setCreditsDegraded] = useState(false)
-  const [doubao, setDoubao] = useState(null) // 豆包（火山方舟 Ark）连通/余额状态
+  const [doubao, setDoubao] = useState(null) // ToAPIs 对话模型连通/余额状态（变量名与接口路径保留历史命名）
 
   // 品牌：优先读 localStorage（用户上次手动选的品牌），否则用 DEFAULT_BRAND
   const [brand, setBrand] = useState(() => {
@@ -577,7 +577,7 @@ export default function App() {
     }
   }, [])
 
-  // 豆包（火山方舟 Ark）状态：加载时拉一次 + 生成后（积分刷新事件）再拉一次，不挂 5 分钟轮询
+  // 文本大模型（ToAPIs）状态：加载时拉一次 + 生成后（积分刷新事件）再拉一次，不挂 5 分钟轮询
   useEffect(() => {
     let mounted = true
     const loadDoubao = async () => {
@@ -585,7 +585,7 @@ export default function App() {
         const r = await api.doubaoStatus()
         if (mounted) setDoubao(r)
       } catch (e) {
-        if (mounted) setDoubao({ ok: false, model: '', latency_ms: null, message: '豆包状态获取失败', balance: null, balance_source: null, needs_ak_sk: false })
+        if (mounted) setDoubao({ ok: false, model: '', latency_ms: null, message: '对话模型状态获取失败', balance: null, balance_source: null, needs_ak_sk: false })
       }
     }
     loadDoubao()
@@ -891,13 +891,13 @@ export default function App() {
                 </span>
               </Chip>
 
-              {/* 大模型积分（DeepSeek v4-flash）*/}
+              {/* 大模型积分（ToAPIs 统一余额）*/}
               <Chip
                 size="sm"
                 variant="secondary"
                 color="default"
                 className="h-7 shrink-0 gap-1.5 whitespace-nowrap"
-                title={creditsLoading ? '积分刷新中…' : 'DeepSeek v4-flash · 文案/脚本/拆解默认使用，不可更改'}
+                title={creditsLoading ? '积分刷新中…' : 'ToAPIs 统一余额 · 文案/脚本/拆解默认使用 Kimi K2.5，可在 .env 切换'}
               >
                 <Icon name="brain" size={13} />
                 <span className="font-semibold">
@@ -909,7 +909,7 @@ export default function App() {
                 </span>
               </Chip>
 
-              {/* 豆包（火山方舟 Ark）状态 */}
+              {/* 文本大模型状态（ToAPIs） */}
               <Chip
                 size="sm"
                 variant="secondary"
@@ -918,20 +918,20 @@ export default function App() {
                 title={
                   doubao
                     ? [
-                        '豆包（火山方舟 Ark）' + (doubao.model ? ` · ${doubao.model}` : ''),
+                        'ToAPIs 对话模型' + (doubao.model ? ` · ${doubao.model}` : ''),
                         doubao.ok ? `连通正常${doubao.latency_ms != null ? ` · ${doubao.latency_ms}ms` : ''}` : `异常 · ${doubao.message}`,
-                        doubao.needs_ak_sk ? '余额需配置火山 AK/SK 后显示' : (doubao.balance != null ? `剩余额度：${doubao.balance}` : ''),
+                        doubao.balance != null ? `剩余额度：${doubao.balance}` : '',
                       ].filter(Boolean).join(' · ')
-                    : '豆包状态加载中…'
+                    : '对话模型状态加载中…'
                 }
               >
                 <Icon name="magic" size={13} />
                 <span className="font-semibold">
                   {!doubao
-                    ? '豆包…'
+                    ? '对话模型…'
                     : !doubao.ok
-                      ? '豆包异常'
-                      : (doubao.balance != null ? `豆包 ${doubao.balance}` : '豆包 正常')}
+                      ? '对话模型异常'
+                      : (doubao.balance != null ? `对话模型 ${doubao.balance}` : '对话模型 正常')}
                 </span>
               </Chip>
             </div>

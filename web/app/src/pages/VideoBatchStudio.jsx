@@ -635,10 +635,18 @@ export default function VideoBatchStudio(props) {
             })
             if (dl?.url) localUrl = dl.url
           } catch (e) {
-            // 下载失败 → 标失败而非伪成功（否则视频库读不到本地文件，视频会“消失”）
+            // ★ 云端任务已 completed 且 billing=settled（已扣费），只是 CDN 下载断流。
+            // 绝不能 cancelPendingQueue —— 那会把队列里其它已付费任务也判死。
+            // 保留 taskId / remoteUrl，让用户点「重新下载（免费）」补捞，
+            // 而不是重新生成（重新生成会再扣一次积分）。
             stopProgress(itemId)
-            updateTask(itemId, { status: STATUS_FAIL, progress: 100, error: '视频下载到本地失败：' + (e?.message || e) })
-            cancelPendingQueue(`视频下载失败：${String(e?.message || e).slice(0, 60)}`)
+            updateTask(itemId, {
+              status: STATUS_FAIL, progress: 100,
+              klingTaskId: taskId, remoteUrl,
+              downloadFailed: true,
+              error: '视频已在云端生成并计费，仅下载到本地失败：' + String(e?.message || e).slice(0, 110) + '。请点「重新下载」补捞（不会重复扣费）',
+            })
+            Toast.warn('云端已生成，仅本地下载失败，可点「重新下载」免费补捞')
             return
           }
         }
@@ -714,6 +722,50 @@ export default function VideoBatchStudio(props) {
     }
   }, [brand, pollKlingStatus, updateTask, videoModel, cancelPendingQueue])
 
+  // ====== 仅补下载（不重新生成、不二次扣费）======
+  // 适用：ToAPIs 云端任务已 completed 并 settled 扣费，但 CDN 下载断流导致本地缺文件。
+  // 复用已有 taskId / remoteUrl，只把文件重新拉回本地；后端下载已带 3 次重试 + 完整性校验。
+  const redownloadOnly = useCallback(async (task) => {
+    const taskId = task?.klingTaskId
+    const remoteUrl = task?.remoteUrl
+    if (!taskId || !remoteUrl) {
+      Toast.warn('缺少云端任务信息，无法补下载')
+      return
+    }
+    updateTask(task.id, { status: STATUS_RUNNING, progress: 90, error: '' })
+    try {
+      const dl = await api.videoToapisDownload({
+        url: remoteUrl,
+        filename: `toapis_${taskId}.mp4`,
+        brand: brand || 'cloudsleepgarden',
+        credits_used: (typeof task?.creditsUsed === 'number') ? task.creditsUsed : null,
+        model: task?.config?.videoModel || videoModel,
+        resolution: task?.config?.resolution || null,
+        duration: task?.duration || null,
+      })
+      const localUrl = dl?.url || remoteUrl
+      updateTask(task.id, {
+        status: STATUS_SUCCESS, progress: 100,
+        videoUrl: localUrl, remoteUrl, error: '', downloadFailed: false,
+      })
+      Toast.success('已补下载到本地，未重复扣费')
+      try {
+        const g = await api.videoGenerated({ brand: brand || 'cloudsleepgarden' }).catch(() => null)
+        if (g) {
+          setGeneratedImages(Array.isArray(g.images) ? g.images : [])
+          setGeneratedVideos(Array.isArray(g.videos) ? g.videos : [])
+        }
+      } catch { /* ignore */ }
+      try { window.dispatchEvent(new Event('app:videos-updated')) } catch { /* ignore */ }
+    } catch (e) {
+      updateTask(task.id, {
+        status: STATUS_FAIL, progress: 100, downloadFailed: true,
+        error: '补下载失败：' + String(e?.message || e).slice(0, 110) + '（云端视频已扣费，稍后再点「重新下载」即可）',
+      })
+      Toast.error('补下载失败：' + (e?.message || e))
+    }
+  }, [updateTask, brand, videoModel])
+
   // ====== shots 变化 → 重新解析 scenes ======
   const reparse = useCallback((list) => {
     const r = parseScriptLocal(shotsToScript(list))
@@ -756,7 +808,7 @@ export default function VideoBatchStudio(props) {
     return { imagePrompt, videoPrompt, raw: t }
   }
 
-  // ====== 分镜文案自动生成（参考图 + 云眠AI「短视频分镜助手」预设 → 豆包，后台队列串行）======
+  // ====== 分镜文案自动生成（参考图 + 云眠AI「短视频分镜助手」预设 → ToAPIs 文本模型，后台队列串行）======
   const generateScriptContent = async (shotIndex) => {
     const labels = brand === 'sofawithcat' ? PRESET_LABELS_SOFA : PRESET_LABELS_HOME
     const preset = labels[shotIndex % labels.length]
@@ -777,7 +829,7 @@ export default function VideoBatchStudio(props) {
     const userPrompt = `请严格按上述系统预设，只生成第 ${shotIndex + 1} 个分镜（单分镜逐次生成，不要输出其他分镜）。\n本分镜目标（差异化标签）：${preset}。\n本分镜时长：${shotDur}（总时长必须严格使用该秒数，视频提示词按此时长写）。\n\n【已生成记录（用于差异化，本分镜不得重复其机位/核心动作/景别/运动路线）】\n${history.length ? history.join('\n') : '（暂无，本分镜为第一个）'}\n\n【输出结构要求，必须严格遵守】\n1. 先写「图片提示词」：以【图片提示词】开头，只写静态关键帧画面（禁止写镜头移动、跟拍、跑动/跳跃/翻滚过程、动作变化，禁止出现“动态/连续/跟随”等词），用于生成视频底图。\n2. 再写「视频提示词」：以【视频提示词】开头，只写动态过程与运镜（不重复图片已固定的场景、产品、花色、机位等静态参数）。\n两个区块都必须完整写出、不能省略；严格基于参考图片生成，场景锁定（完整复用原图全部环境、${productNoun}、猫咪、道具、光线）；不要 markdown 大标题，不要多余解释文字。`
     const resp = await api.chat({
       messages: [{ role: 'system', content: system }, { role: 'user', content: userPrompt }],
-      model: 'doubao',
+      model: 'toapis',
       max_tokens: 2000,
       temperature: 0.7,
       images: refUrl ? [refUrl] : [],
@@ -1298,16 +1350,21 @@ export default function VideoBatchStudio(props) {
 
   // ====== 批量重新生成 ======
   const regenerateAll = async () => {
-    const fails = tasksQueue.filter(t => t.status === STATUS_FAIL)
+    // ★ 区分两类失败：云端真失败 → 重新生成（会再扣费）；仅下载失败 → 只能补下载（免费）。
+    const recoverable = tasksQueue.filter(t => t.status === STATUS_FAIL && t.downloadFailed && t.klingTaskId)
+    const fails = tasksQueue.filter(t => t.status === STATUS_FAIL && !(t.downloadFailed && t.klingTaskId))
+    if (recoverable.length) {
+      Toast.info(`${recoverable.length} 条是「仅下载失败」，请点卡片上的「重新下载（免费）」补捞，不会重复扣费`)
+    }
     if (fails.length) {
       try {
         for (const t of fails) await api.videoRetry({ task_id: t.id }).catch(() => {})
-        setTasksQueue(prev => prev.map(t => t.status === STATUS_FAIL ? { ...t, status: STATUS_QUEUED, error: undefined } : t))
+        setTasksQueue(prev => prev.map(t => (fails.some(f => f.id === t.id) ? { ...t, status: STATUS_QUEUED, error: undefined } : t)))
         // 重试同样消耗积分 → 立即刷新顶部积分显示
         window.dispatchEvent(new Event('app:refresh-credits'))
         Toast.success(`已重新排队 ${fails.length} 条失败任务`)
       } catch {}
-    } else {
+    } else if (!recoverable.length) {
       Toast.info('没有需要重新生成的失败任务')
     }
   }
@@ -1714,8 +1771,8 @@ export default function VideoBatchStudio(props) {
                             <div style={{ color: 'var(--muted-foreground)', fontSize: 12, textAlign: 'center', padding: 16 }}>请先在第二步<br />生成分镜图</div>
                           )}
                           {(running || failed || canceled) && (
-                            <div style={{ position: 'absolute', top: 8, left: 8, fontSize: 11, padding: '2px 8px', borderRadius: 999, background: failed ? 'rgba(220,38,38,.9)' : canceled ? 'rgba(148,163,184,.85)' : 'rgba(0,0,0,.6)', color: '#fff' }}>
-                              {running ? (task.status === STATUS_RUNNING ? '生成中…' : '排队中') : failed ? '生成失败' : '已取消'}
+                            <div title={failed ? (task.error || '生成失败') : undefined} style={{ position: 'absolute', top: 8, left: 8, fontSize: 11, padding: '2px 8px', borderRadius: 999, background: failed ? 'rgba(220,38,38,.9)' : canceled ? 'rgba(148,163,184,.85)' : 'rgba(0,0,0,.6)', color: '#fff' }}>
+                              {running ? (task.status === STATUS_RUNNING ? '生成中…' : '排队中') : failed ? (task.downloadFailed ? '下载失败' : '生成失败') : '已取消'}
                             </div>
                           )}
                         </div>
@@ -1723,6 +1780,11 @@ export default function VideoBatchStudio(props) {
                       <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>分镜{cnNums[scene.idx - 1] || scene.idx}</div>
                         <p title={scene.visual || scene.shot || ''} style={{ fontSize: 12, color: 'var(--muted-foreground)', margin: 0, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: 34, cursor: 'default' }}>{scene.visual || scene.shot}</p>
+                        {(failed || canceled) && task?.error && (
+                          <div title={task.error} style={{ fontSize: 11, color: 'var(--danger)', lineHeight: 1.5, background: 'rgba(220,38,38,.08)', borderRadius: 8, padding: '6px 8px', wordBreak: 'break-all' }}>
+                            {String(task.error).slice(0, 96)}
+                          </div>
+                        )}
                         {running && task && (
                           <div style={{ marginTop: 2 }}>
                             <div style={{ height: 6, borderRadius: 999, background: 'var(--border)', overflow: 'hidden' }}>
@@ -1739,9 +1801,9 @@ export default function VideoBatchStudio(props) {
                           block
                           loading={!!running}
                           disabled={!hasFrame || !!running}
-                          onClick={() => submitOneShot(scene.idx)}
+                          onClick={() => (failed && task?.downloadFailed && task?.klingTaskId) ? redownloadOnly(task) : submitOneShot(scene.idx)}
                         >
-                          {done ? '重新生成' : failed ? '重试' : '开始生成'}
+                          {done ? '重新生成' : (failed && task?.downloadFailed && task?.klingTaskId) ? '重新下载（免费）' : failed ? '重试' : '开始生成'}
                         </Button>
                       </div>
                     </div>
