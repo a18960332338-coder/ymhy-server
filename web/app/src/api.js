@@ -690,6 +690,7 @@ export const api = {
           prompts: Array.isArray(payload.prompts) ? payload.prompts : [],
           idx_only: typeof payload.idx_only === 'number' ? payload.idx_only : null,
           model_id: payload.model_id || null,
+          resolution: payload.resolution || null,
         })
       })
     } catch (e) {

@@ -22,6 +22,13 @@ import { HeroTextArea, HeroInput, HeroSelect } from '../components/ui'
 const cnNums = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十']
 const DURATION_OPTIONS = ['3s', '4s', '5s', '6s', '7s', '8s', '9s', '10s', '15s', '20s', '30s', '45s', '60s']
 
+// 分镜图清晰度：与主图合成页共用同一套选项和 localStorage key（全局一致）
+const FRAME_RESOLUTION_OPTIONS = [
+  { label: '1K 标准', value: '1K' },
+  { label: '2K 高清', value: '2K' },
+  { label: '4K 超清', value: '4K' },
+]
+
 const MODEL_NANOBANANA2 = { id: 'nanobanana2', key: 'nanobanana2', label: 'nanobannan 2', creditsPerFrame: 3, locked: true, note: '锁定床品四件套与小猫形象保持不变' }
 const CHANNELS = ['抖音短视频', '小红书', '快手', '视频号']
 
@@ -249,7 +256,7 @@ function TkBadge({ n }) {
 // ==================== NanoBanana 模型下拉（复用自合成工作台）====================
 const _MODEL_NANO_FAMILY_HINT = /(nano|banana|nanobanana)/i
 const _MODEL_2K4K_HINT = /(2k|4k|pro|hd|ultra)/i
-function ModelSelectDropdown({ value, onChange, placeholder = '选择 NanoBanana 模型', style }) {
+function ModelSelectDropdown({ value, onChange, placeholder = '选择生图模型', style }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [list, setList] = useState([])
@@ -337,7 +344,7 @@ function ModelSelectDropdown({ value, onChange, placeholder = '选择 NanoBanana
               {nanoGroup.map(m => <ModelCardItem key={_id(m)} m={m} value={value} onPick={() => { onChange && onChange(_id(m), m); setOpen(false) }} />)}
               {standardGroup.length > 0 && <GroupLabel color="var(--success)" text="标准（1 积分）" icon={<Icon name="check" size={14} />} />}
               {standardGroup.map(m => <ModelCardItem key={_id(m)} m={m} value={value} onPick={() => { onChange && onChange(_id(m), m); setOpen(false) }} />)}
-              {premiumGroup.length > 0 && <GroupLabel color="var(--surface-tertiary)" text="高级 · 高清（2K / 4K / Pro）" icon={<Icon name="target" size={14} />} />}
+              {premiumGroup.length > 0 && <GroupLabel color="var(--surface-tertiary)" text="其他模型" icon={<Icon name="target" size={14} />} />}
               {premiumGroup.map(m => <ModelCardItem key={_id(m)} m={m} value={value} onPick={() => { onChange && onChange(_id(m), m); setOpen(false) }} />)}
             </div>
           )}
@@ -504,6 +511,14 @@ export default function VideoBatchStudio(props) {
   })
   const [nanoModelMeta, setNanoModelMeta] = useState(MODEL_NANOBANANA2)
   const [shotFeedback, setShotFeedback] = useState('')
+  // 分镜图清晰度：与主图合成页共用 tk:last-resolution，切换页面保持一致
+  const [frameResolution, setFrameResolution] = useState(() => {
+    try { return localStorage.getItem('tk:last-resolution') || '1K' } catch { return '1K' }
+  })
+  const changeFrameResolution = useCallback((r) => {
+    setFrameResolution(r)
+    try { localStorage.setItem('tk:last-resolution', String(r)) } catch {}
+  }, [])
   // 分镜图生成队列（后台串行，多个分镜可同时入队）
   const [frameQueue, setFrameQueue] = useState([])
   const frameQueueRef = useRef([])
@@ -526,6 +541,7 @@ export default function VideoBatchStudio(props) {
   const [tasksQueue, setTasksQueue] = useState([])
   // 批量生成时：任一任务失败/积分不足 → 置 true，取消队列中剩余未提交任务
   const cancelQueueRef = useRef(false)
+  const cancelReasonRef = useRef('')  // 记录真实取消原因，避免硬编码文案掩盖真因
   const pendingTasksRef = useRef([])
   const [selectedVideoId, setSelectedVideoId] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -599,6 +615,7 @@ export default function VideoBatchStudio(props) {
   // 取消队列中尚未开始提交的剩余任务（失败/积分不足时调用）
   const cancelPendingQueue = useCallback((reason) => {
     cancelQueueRef.current = true
+    cancelReasonRef.current = reason || ''
     const pending = pendingTasksRef.current.filter(t => t.status === STATUS_RUNNING && !t.klingTaskId)
     if (pending.length) {
       setTasksQueue(prev => prev.map(t => (pending.some(p => p.id === t.id) ? { ...t, status: STATUS_CANCELED, error: reason || '已取消' } : t)))
@@ -686,40 +703,54 @@ export default function VideoBatchStudio(props) {
   const submitOneKling = useCallback(async (item) => {
     if (!item.frameUrl) {
       updateTask(item.id, { status: STATUS_FAIL, progress: 100, error: '缺少首帧分镜图，无法提交 ToAPIs' })
-      cancelPendingQueue('缺少首帧分镜图')
       return
     }
-    try {
-      // 使用分镜实际配置：模型 id / 时长(3-15s) / 分辨率 / 比例，不再强制映射到 kling-v3
-      const modelId = item.config?.videoModel || videoModel || 'kling-v3'
-      const duration = item.duration || 5
-      const r = await api.videoToapisSubmit({
-        prompt: item.prompt,
-        model: modelId,
-        image_url: item.frameUrl,
-        duration: duration,
-        resolution: item.config?.resolution || '1080p',
-        aspect_ratio: item.config?.aspect || '9:16',
-        brand: brand || 'cloudsleepgarden',
-      })
-      // 消耗了积分 → 立即刷新顶部积分显示
-      window.dispatchEvent(new Event('app:refresh-credits'))
-      const taskId = r?.id || r?.task_id || r?.data?.task_id || r?.data?.id
-      if (!taskId) {
-        const msg = r?.message || r?.detail || r?.error?.message || 'ToAPIs 未返回 task_id'
-        updateTask(item.id, { status: STATUS_FAIL, progress: 100, error: String(msg) })
-        // 未返回 task_id（常见：积分不足 / quota 限制）→ 取消队列剩余任务
-        cancelPendingQueue(String(msg).slice(0, 60))
+    const modelId = item.config?.videoModel || videoModel || 'kling-v3'
+    const doSubmit = (mid) => api.videoToapisSubmit({
+      prompt: item.prompt,
+      model: mid,
+      image_url: item.frameUrl,
+      duration: item.duration || 5,
+      resolution: item.config?.resolution || '1080p',
+      aspect_ratio: item.config?.aspect || '9:16',
+      brand: brand || 'cloudsleepgarden',
+    })
+    // api.js 把后端非 2xx 包装成 {code:-1, message}；成功则直接返回 {id,...}
+    const isFailResp = (resp) =>
+      !resp || resp.code === -1 || !(resp?.id || resp?.task_id || resp?.data?.task_id || resp?.data?.id)
+    let r = await doSubmit(modelId)
+    if (isFailResp(r)) {
+      const firstMsg = String(r?.message || r?.detail || r?.error?.message || 'ToAPIs 未返回 task_id')
+      // 模型无调用权限/不存在 → 自动用默认 kling-v3 重试一次，不再整批取消
+      if (/model_not_found|无调用权限|没有执行此请求|权限/.test(firstMsg) && modelId !== 'kling-v3') {
+        Toast.warn(`模型 ${modelId} 无调用权限，自动改用 kling-v3 重试`)
+        const r2 = await doSubmit('kling-v3')
+        if (isFailResp(r2)) {
+          const msg2 = String(r2?.message || r2?.detail || 'ToAPIs 重试仍失败')
+          updateTask(item.id, { status: STATUS_FAIL, progress: 100, error: msg2 })
+          return
+        }
+        r = r2
+        updateTask(item.id, { config: { ...item.config, videoModel: 'kling-v3' } })
+        item = { ...item, config: { ...item.config, videoModel: 'kling-v3' } }
+      } else {
+        // 积分不足 / 网络 / 余额等致命错误：标失败并取消队列剩余任务
+        updateTask(item.id, { status: STATUS_FAIL, progress: 100, error: firstMsg })
+        cancelPendingQueue(firstMsg)
         return
       }
-      updateTask(item.id, { klingTaskId: taskId })
-      await pollKlingStatus(item.id, taskId, item)
-    } catch (e) {
-      const msg = String(e?.message || e)
-      updateTask(item.id, { status: STATUS_FAIL, progress: 100, error: msg })
-      // 提交异常（含积分不足 / 余额不足 / 网络失败）→ 取消队列剩余任务
-      cancelPendingQueue(msg.slice(0, 60))
     }
+    // 消耗了积分 → 立即刷新顶部积分显示（仅成功提交时）
+    window.dispatchEvent(new Event('app:refresh-credits'))
+    const taskId = r?.id || r?.task_id || r?.data?.task_id || r?.data?.id
+    if (!taskId) {
+      const msg = String(r?.message || r?.detail || r?.error?.message || 'ToAPIs 未返回 task_id')
+      updateTask(item.id, { status: STATUS_FAIL, progress: 100, error: msg })
+      cancelPendingQueue(msg)
+      return
+    }
+    updateTask(item.id, { klingTaskId: taskId })
+    await pollKlingStatus(item.id, taskId, item)
   }, [brand, pollKlingStatus, updateTask, videoModel, cancelPendingQueue])
 
   // ====== 仅补下载（不重新生成、不二次扣费）======
@@ -986,6 +1017,7 @@ export default function VideoBatchStudio(props) {
         prompts: [prompt],
         idx_only: idx,
         model_id: nanoModelId || undefined,
+        resolution: frameResolution || undefined,
       })
       // 分镜生图消耗 NanoBanana 积分 → 立即刷新顶部积分显示
       window.dispatchEvent(new Event('app:refresh-credits'))
@@ -1003,7 +1035,7 @@ export default function VideoBatchStudio(props) {
       // 生成完成后停掉轮询（若有后续排队任务，下一条会重新启动）
       stopFrameProgressPolling()
     }
-  }, [scenes, brand, nanoModelId, uploadRefImage, buildImagePrompt, startFrameProgressPolling, stopFrameProgressPolling])
+  }, [scenes, brand, nanoModelId, frameResolution, uploadRefImage, buildImagePrompt, startFrameProgressPolling, stopFrameProgressPolling])
 
   const processFrameQueue = useCallback(async () => {
     if (frameProcessingRef.current) return
@@ -1251,7 +1283,8 @@ export default function VideoBatchStudio(props) {
         if (cancelQueueRef.current) {
           const rest = pendingTasksRef.current.filter(t => t.status === STATUS_RUNNING && !t.klingTaskId)
           if (rest.length) {
-            setTasksQueue(prev => prev.map(t => (rest.some(p => p.id === t.id) ? { ...t, status: STATUS_CANCELED, error: '因前序任务失败已取消' } : t)))
+            const reason = cancelReasonRef.current || '因前序任务失败已取消'
+            setTasksQueue(prev => prev.map(t => (rest.some(p => p.id === t.id) ? { ...t, status: STATUS_CANCELED, error: reason } : t)))
           }
           break
         }
@@ -1842,7 +1875,25 @@ export default function VideoBatchStudio(props) {
                 />
               </div>
               <div style={{ marginBottom: 14 }}>
-                <label style={panelStyle.label}>分辨率</label>
+                <label style={panelStyle.label}>清晰度</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {FRAME_RESOLUTION_OPTIONS.map(r => (
+                    <HeroButton
+                      key={r.value}
+                      size="sm"
+                      variant={frameResolution === r.value ? 'secondary' : 'outline'}
+                      onPress={() => changeFrameResolution(r.value)}
+                    >
+                      {r.label}
+                    </HeroButton>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6, lineHeight: 1.5 }}>
+                  生图输出精度，与主图合成共用设置
+                </div>
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={panelStyle.label}>画面比例</label>
                 <HeroSelect value={aspectRatio} onChange={setAspectRatio} options={klingAspects.map(a => {
                   const label = a === '16:9' ? '16:9 横屏' : a === '1:1' ? '1:1 方形' : '9:16 竖屏'
                   return { value: label, label }
