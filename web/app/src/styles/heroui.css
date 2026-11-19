@@ -57,6 +57,16 @@
   --accent-soft-foreground: oklch(0.8200 0.1100 250.00);
 }
 
+/* 茄境 CIGARREALM：雪茄周边店铺 · 沉稳金色（黄铜/皮革调） */
+[data-brand="cigarrealm"] {
+  --accent: oklch(0.7500 0.1300 75.00);
+  --accent-hover: oklch(0.8000 0.1350 75.00);
+  --accent-foreground: oklch(0.2000 0.0400 75.00);
+  --accent-soft: oklch(0.3400 0.0700 75.00);
+  --accent-soft-hover: oklch(0.3900 0.0800 75.00);
+  --accent-soft-foreground: oklch(0.8800 0.1000 75.00);
+}
+
 /* ==========================================================
    主图合成页作用域：.hero-page
    ----------------------------------------------------------

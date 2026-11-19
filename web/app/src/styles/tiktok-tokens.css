@@ -292,6 +292,35 @@ body {
   --semi-color-info:   var(--tk-purple-500);
 }
 
+/* ===== 茄境 CIGARREALM：品牌金（黄铜/皮革暖调） ===== */
+.app-shell[data-brand="cigarrealm"]::before {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(217,164,65,.12), transparent 60%),
+    radial-gradient(1000px 520px at 0% 110%, rgba(240,196,105,.08), transparent 60%);
+}
+.app-shell[data-brand="cigarrealm"] {
+  --tk-primary:    oklch(0.7500 0.1300 75.00);
+  --tk-primary-foreground: oklch(0.2000 0.0400 75.00);
+  --tk-ring:       oklch(0.8000 0.1350 75.00);
+  --tk-accent:     oklch(0.8000 0.1350 75.00);
+  --tk-accent-foreground: oklch(0.2000 0.0400 75.00);
+  --tk-brand-gradient:      linear-gradient(90deg, #b9882f 0%, #f0c469 100%);
+  --tk-brand-gradient-soft: linear-gradient(90deg, rgba(217,164,65,.16) 0%, rgba(240,196,105,.16) 100%);
+  --tk-neon-glow-primary: 0 0 0 1px rgba(217,164,65,.55), 0 10px 36px -6px rgba(217,164,65,.42);
+  --tk-shadow-focus: 0 0 0 2px rgba(217,164,65,.55);
+
+  --primary:        oklch(0.7500 0.1300 75.00);
+  --primary-hover:  oklch(0.8000 0.1350 75.00);
+  --primary-active: oklch(0.6900 0.1250 75.00);
+  --danger:         var(--tk-red-500);
+  --semi-color-primary:        oklch(0.7500 0.1300 75.00);
+  --semi-color-primary-hover:  oklch(0.8000 0.1350 75.00);
+  --semi-color-primary-active: oklch(0.6900 0.1250 75.00);
+  --semi-color-primary-light-default: oklch(0.3400 0.0700 75.00);
+  --semi-color-danger: var(--tk-red-500);
+  --semi-color-info:   oklch(0.7500 0.1300 75.00);
+}
+
 /* 移除旧的 body::before 霓虹（已搬到 .app-shell::before 里按 data-brand 切换） */
 body::before { display: none; }
 

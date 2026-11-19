@@ -11,6 +11,8 @@ import { TemplateGen } from './pages/TemplateStudio'
 import AiChat from './pages/AiChat'
 import SuiteGenerator from './pages/SuiteGenerator'
 import { ImageGen } from './pages/ImageGen'
+import CigarProductStudio from './pages/CigarProductStudio'
+import CigarImageToLive from './pages/CigarImageToLive'
 import Icon from './components/Icon'
 import PageErrorBoundary from './components/PageErrorBoundary'
 import api from './api'
@@ -94,6 +96,7 @@ const FALLBACK_BRANDS = [
   { key: 'lyrosdream', label: 'Luluna月下谣' },
   { key: 'oblachny_sad', label: 'Облачный Сад' },
   { key: 'wuduomian', label: '五朵棉袜子' },
+  { key: 'cigarrealm', label: '茄境 CIGARREALM' },
 ]
 
 // 搜索框（HeroUI Input 封装）
@@ -134,6 +137,7 @@ function BrandSwitcher({ brands, brand, onChange }) {
     { key: 'lyrosdream',      label: 'Luluna月下谣' },
     { key: 'oblachny_sad',    label: 'Облачный Сад' },
     { key: 'wuduomian',       label: '五朵棉袜子' },
+    { key: 'cigarrealm',      label: '茄境 CIGARREALM' },
   ]
   const current = list.find(b => b.key === brand) || list[0]
 
@@ -206,6 +210,8 @@ const MemoVideoReplicate  = React.memo(VideoReplicate)
 const MemoImageGen        = React.memo(ImageGen)
 const MemoAiChat          = React.memo(AiChat)
 const MemoSuiteGenerator  = React.memo(SuiteGenerator)
+const MemoCigarProduct    = React.memo(CigarProductStudio)
+const MemoCigarLive       = React.memo(CigarImageToLive)
 
 const TAB_KEY_STUDIO = 'studio'
 const TAB_KEY_RESULTS = 'results'
@@ -217,6 +223,8 @@ const TAB_KEY_TEMPLATE = 'template'  // 模版合成
 const TAB_KEY_IMGGEN = 'image_gen'   // 图片生成（AI 聊天式生图，一级独立页）
 const TAB_KEY_CHAT = 'ai_chat'      // AI 大模型对话
 const TAB_KEY_SUITE = 'suite_gen'   // 套图生成（ToAPIs function-calling Agent）
+const TAB_KEY_CIGAR_PRODUCT = 'cigar_product'  // 茄境 · 产品图片生产
+const TAB_KEY_CIGAR_LIVE = 'cigar_live'        // 茄境 · 图片转Live
 
 // 主导航分组（icon 使用 iconpark 图标名）
 const NAV_GROUPS = [
@@ -250,7 +258,31 @@ const NAV_GROUPS = [
   },
 ]
 
-function TkSideNav({ activeKey, onKeyChange, counts, auth, onLogout }) {
+// 茄境 CIGARREALM 专属导航：图片生成/视频生成两类，各只有一个功能
+const CIGAR_NAV_GROUPS = [
+  {
+    label: '图片生成',
+    icon: 'picture',
+    items: [
+      { key: TAB_KEY_CIGAR_PRODUCT, label: '产品图片生产', icon: 'picture' },
+    ],
+  },
+  {
+    label: '视频生成',
+    icon: 'video',
+    items: [
+      { key: TAB_KEY_CIGAR_LIVE, label: '图片转Live', icon: 'video', soon: true },
+    ],
+  },
+]
+
+// 按品牌返回导航分组（茄境用专属导航，其它店铺用原导航）
+function navGroupsForBrand(brandKey) {
+  return brandKey === 'cigarrealm' ? CIGAR_NAV_GROUPS : NAV_GROUPS
+}
+
+function TkSideNav({ activeKey, onKeyChange, counts, auth, onLogout, brand }) {
+  const groups = navGroupsForBrand(brand)
   return (
     <Surface
       variant="default"
@@ -280,7 +312,7 @@ function TkSideNav({ activeKey, onKeyChange, counts, auth, onLogout }) {
 
       {/* 导航区 */}
       <nav className="flex flex-1 flex-col gap-4 overflow-y-auto p-3">
-        {NAV_GROUPS.map((group, gi) => (
+        {groups.map((group, gi) => (
           <div key={group.label || `g_${gi}`} className="flex flex-col gap-1">
             <span className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-(--muted)">
               {group.label}
@@ -294,13 +326,15 @@ function TkSideNav({ activeKey, onKeyChange, counts, auth, onLogout }) {
                   variant={active ? 'secondary' : 'ghost'}
                   size="sm"
                   fullWidth
+                  isDisabled={!!item.soon}
                   className="h-9 justify-start gap-2 px-3 text-left text-[13px]"
                   onPress={() => onKeyChange && onKeyChange(item.key)}
-                  title={item.label}
+                  title={item.soon ? `${item.label}（即将上线）` : item.label}
                 >
                   <Icon name={item.icon} size={16} />
                   <span className="flex-1">{item.label}</span>
-                  {typeof count === 'number' && count > 0 && (
+                  {item.soon && <span className="text-[10px] opacity-60">即将上线</span>}
+                  {!item.soon && typeof count === 'number' && count > 0 && (
                     <Chip size="sm" variant="secondary" color="default">{count}</Chip>
                   )}
                 </HeroButton>
@@ -471,6 +505,14 @@ export default function App() {
   migrateLegacyRecords()
   // 同步当前登录账号给 api 层，使所有后端请求附带 ?account= 实现图片/记录数据隔离
   useEffect(() => { api.setAccount(auth?.type) }, [auth])
+
+  // 切换店铺时，若当前 tab 不属于目标店铺的导航，则自动切到该店铺的默认功能页
+  useEffect(() => {
+    const validKeys = navGroupsForBrand(brand).flatMap(g => (g.items || []).map(n => n.key))
+    if (!validKeys.includes(activeTab)) {
+      setActiveTab(brand === 'cigarrealm' ? TAB_KEY_CIGAR_PRODUCT : TAB_KEY_STUDIO)
+    }
+  }, [brand])
 
   // 加载品牌元数据
   useEffect(() => {
@@ -738,7 +780,7 @@ export default function App() {
     [TAB_KEY_1688]: 0,
   }), [buckets])
 
-  const activeLabel = NAV_GROUPS.reduce((acc, g) => {
+  const activeLabel = navGroupsForBrand(brand).reduce((acc, g) => {
     if (acc) return acc
     if (g.key === activeTab) return g.label
     const it = (g.items || []).find(n => n.key === activeTab)
@@ -778,6 +820,7 @@ export default function App() {
           onKeyChange={(k) => setActiveTab(k)}
           counts={counts}
           auth={auth}
+          brand={brand}
           onLogout={handleLogout}
         />
 
@@ -992,6 +1035,18 @@ export default function App() {
                 <MemoAiChat brand={brand} account={auth?.type} />
               </PageErrorBoundary>
             </div>
+            {/* 茄境 · 产品图片生产（6 步向导） */}
+            <div style={{ display: activeTab === TAB_KEY_CIGAR_PRODUCT ? 'flex' : 'none', flexDirection: 'column', flex: '1 1 auto', height: '100%', minHeight: 0 }}>
+              <PageErrorBoundary name="产品图片生产">
+                <MemoCigarProduct brand={brand} account={auth?.type} />
+              </PageErrorBoundary>
+            </div>
+            {/* 茄境 · 图片转Live（即将上线） */}
+            <div style={{ display: activeTab === TAB_KEY_CIGAR_LIVE ? 'flex' : 'none', flexDirection: 'column', flex: '1 1 auto', height: '100%', minHeight: 0 }}>
+              <PageErrorBoundary name="图片转Live">
+                <MemoCigarLive brand={brand} account={auth?.type} />
+              </PageErrorBoundary>
+            </div>
             {/* 图库保持常驻挂载（切 tab 只隐藏不卸载），保留列表数据与搜索状态 */}
             <div style={{ display: activeTab === TAB_KEY_RESULTS ? 'flex' : 'none', flexDirection: 'column', flex: '1 1 auto', height: '100%', minHeight: 0 }}>
               <PageErrorBoundary name="图库">
@@ -1030,5 +1085,5 @@ function StatusDot({ tone = 'muted', pulse = false }) {
 
 
 function VALID_BRAND_KEY(k) {
-  return k === 'cloudsleepgarden' || k === 'sofawithcat' || k === 'lyrosdream' || k === 'oblachny_sad'
+  return k === 'cloudsleepgarden' || k === 'sofawithcat' || k === 'lyrosdream' || k === 'oblachny_sad' || k === 'cigarrealm'
 }

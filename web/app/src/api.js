@@ -705,6 +705,26 @@ export const api = {
   // opts.source 可选：仅返回 meta.source 等于该值的视频（如 'replicate' 仅返回复刻视频）
   // opts.allBrands=true：跨当前账号下所有品牌聚合视频（视频库统一展示用）
   videoGenerated: (opts = {}) => request(`/api/video/generated${_qs({ brand: opts.brand, source: opts.source, all_brands: opts.allBrands ? '1' : undefined })}`),
+
+  // ===== 茄境 CIGARREALM · 产品图片生产 =====
+  cigarPresets: () => request('/api/cigar/presets'),
+  cigarTemplates: () => request('/api/cigar/templates'),
+  cigarSaveTemplate: (payload) => request('/api/cigar/templates', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarRenameTemplate: (payload) => request('/api/cigar/templates/rename', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarGenPrompts: (payload) => request('/api/cigar/gen_prompts', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarSplit: (payload) => request('/api/cigar/split', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarGenerate: (payload) => request('/api/cigar/generate', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarHistory: () => request('/api/cigar/history'),
+  cigarUploadRef: async (file, brand = 'cigarrealm') => {
+    // 参考图上传到 synthesized 桶（引擎 _resolve_ref_url 可解析 /api/image/synthesized/...），
+    // 拿到后端地址后再由 ToAPIs 引擎转公网 URL；失败抛错由调用方处理
+    const fd = new FormData()
+    fd.append('files', file)
+    const res = await fetch(`${api.baseUrl || ''}/api/upload/synthesized?brand=${encodeURIComponent(brand)}`, { method: 'POST', body: fd })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data?.detail || '参考图上传失败')
+    return data?.saved?.[0] || null
+  },
 }
 
 export default api

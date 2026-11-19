@@ -4,8 +4,8 @@ export const ACCOUNT_LABELS = { a: '云眠A', b: '云眠B' }
 
 // 账号 -> 可见店铺 key 白名单；云眠A 全店，云眠B 除软居与猫外。
 export const ACCOUNT_BRAND_PERMS = {
-  a: ['cloudsleepgarden', 'sofawithcat', 'lyrosdream', 'oblachny_sad', 'wuduomian'],
-  b: ['cloudsleepgarden', 'lyrosdream', 'oblachny_sad', 'wuduomian'],
+  a: ['cloudsleepgarden', 'sofawithcat', 'lyrosdream', 'oblachny_sad', 'wuduomian', 'cigarrealm'],
+  b: ['cloudsleepgarden', 'lyrosdream', 'oblachny_sad', 'wuduomian', 'cigarrealm'],
 }
 
 export function accId(account) {
