@@ -231,3 +231,8 @@
 - 仓库2（app.remote.py，ymhy-server-backup）：有改动（memory.md +5，此前遗留未提交），本地 commit fee893c "backup 2026-11-20"，push 仍被 GitHub Push Protection 拒绝（GH013 rule violations），拦截点仍为历史提交 0779abf：腾讯云 Secret ID（_cos_probe.py:4、_write_env.py:20）、DeepSeek API Key（app.py:160、app.py.bak_cos:160）、VolcEngine Ark API Key（app.py:165、app.py.bak_cos:165）。按约定未绕过，本地保留。
 - 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥；本地已累计 39 个未推送提交（HEAD=fee893c，ahead 39），远端仍停留在 3705136。
 - 结果：仓库1 有提交并推送成功；仓库2 有本地提交但推送失败（同一密钥拦截）。
+
+## 2026-11-22 03:17
+- 仓库1（前端+引擎，ymhy-server）：无源码改动（NO_CHANGES，HEAD=4aebe2d "backup 2026-11-20"，ahead 0，工作区干净）；仅追加本 memory.md 产生改动，按 backup 命令提交并 push。
+- 仓库2（app.remote.py，ymhy-server-backup）：无改动，跳过（NO_CHANGES，HEAD=8dc384f "backup 2026-11-20"，ahead 40），本次未做 push 尝试。
+- 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥（腾讯云 Secret ID / DeepSeek API Key / VolcEngine Ark API Key）；本地已累计 40 个未推送提交，远端仍停留在 3705136。
