@@ -711,8 +711,10 @@ export const api = {
   cigarTemplates: () => request('/api/cigar/templates'),
   cigarSaveTemplate: (payload) => request('/api/cigar/templates', { method: 'POST', body: JSON.stringify(payload) }),
   cigarRenameTemplate: (payload) => request('/api/cigar/templates/rename', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarUpdateTemplate: (payload) => request('/api/cigar/templates/update', { method: 'POST', body: JSON.stringify(payload) }),
   cigarGenPrompts: (payload) => request('/api/cigar/gen_prompts', { method: 'POST', body: JSON.stringify(payload) }),
   cigarSplit: (payload) => request('/api/cigar/split', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarTranslate: (payload) => request('/api/cigar/translate', { method: 'POST', body: JSON.stringify(payload) }),
   cigarGenerate: (payload) => request('/api/cigar/generate', { method: 'POST', body: JSON.stringify(payload) }),
   cigarHistory: () => request('/api/cigar/history'),
   cigarUploadRef: async (file, brand = 'cigarrealm') => {
