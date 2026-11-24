@@ -242,3 +242,9 @@
 - 仓库2（app.remote.py，ymhy-server-backup）：无改动，跳过（NO_CHANGES，HEAD=8dc384f "backup 2026-11-20"，ahead 40），本次未做 push 尝试。
 - 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥（腾讯云 Secret ID / DeepSeek API Key / VolcEngine Ark API Key）；本地已累计 40 个未推送提交，远端仍停留在 3705136。
 - 结果：仓库1 仅 memory 追加类改动（已提交并推送）；仓库2 无改动。
+
+## 2026-11-25 03:30
+- 仓库1（前端+引擎，ymhy-server）：有改动（9 处：App.css、App.jsx、api.js、CatsGallery.jsx、CigarProductStudio.jsx、DesignStudio.jsx、TemplateStudio.jsx 修改，新增 hooks/、pages/CigarGallery.jsx），已由 03:00 并发实例提交为 5d84658 "backup 2026-11-25"；本次核验 ahead 1 后补 push，结果 Everything up-to-date，ahead 归 0，远端已指向 5d84658。
+- 仓库2（app.remote.py，ymhy-server-backup）：无改动，跳过（NO_CHANGES，HEAD=c954a2d "backup 2026-11-24"，ahead 41），本次未做 push 尝试。
+- 待办（持续，无进展）：清理仓库2历史提交 0779abf 中的硬编码密钥（腾讯云 Secret ID / DeepSeek API Key / VolcEngine Ark API Key）；本地已累计 41 个未推送提交，远端仍停留在 3705136。
+- 结果：仓库1 有提交并推送成功；仓库2 无改动。
