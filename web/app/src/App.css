@@ -1408,3 +1408,18 @@ select.form-input:focus {
 @media (max-width: 960px) {
   .sidebar, .tk-side-nav { display: none; }
 }
+
+/* ── HeroUI Modal Body 修复 ──────────────────────────────────────────
+   .modal__body--scroll-inside 默认 display:flex; flex-direction:column;
+   justify-content:center。当内容高度超过弹窗可视高度时，flex 居中会把
+   超长内容「向上下两端溢出」——顶部内容跑到容器外，且 scrollTop 归零也
+   无法滚回（内容物理上不在滚动范围内），表现为"弹窗上半部分被截断、
+   前面的内容看不到"。
+   修复：改为顶部对齐 + 子元素禁止收缩，内容超高时正常从顶部滚动。 */
+.modal__body--scroll-inside {
+  justify-content: flex-start !important;
+  align-items: stretch !important;
+}
+.modal__body--scroll-inside > * {
+  flex-shrink: 0 !important;
+}

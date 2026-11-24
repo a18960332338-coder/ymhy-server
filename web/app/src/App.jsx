@@ -12,6 +12,7 @@ import AiChat from './pages/AiChat'
 import SuiteGenerator from './pages/SuiteGenerator'
 import { ImageGen } from './pages/ImageGen'
 import CigarProductStudio from './pages/CigarProductStudio'
+import CigarGallery from './pages/CigarGallery'
 import CigarImageToLive from './pages/CigarImageToLive'
 import Icon from './components/Icon'
 import PageErrorBoundary from './components/PageErrorBoundary'
@@ -211,6 +212,7 @@ const MemoImageGen        = React.memo(ImageGen)
 const MemoAiChat          = React.memo(AiChat)
 const MemoSuiteGenerator  = React.memo(SuiteGenerator)
 const MemoCigarProduct    = React.memo(CigarProductStudio)
+const MemoCigarGallery    = React.memo(CigarGallery)
 const MemoCigarLive       = React.memo(CigarImageToLive)
 
 const TAB_KEY_STUDIO = 'studio'
@@ -224,6 +226,7 @@ const TAB_KEY_IMGGEN = 'image_gen'   // 图片生成（AI 聊天式生图，一�
 const TAB_KEY_CHAT = 'ai_chat'      // AI 大模型对话
 const TAB_KEY_SUITE = 'suite_gen'   // 套图生成（ToAPIs function-calling Agent）
 const TAB_KEY_CIGAR_PRODUCT = 'cigar_product'  // 茄境 · 产品图片生产
+const TAB_KEY_CIGAR_GALLERY = 'cigar_gallery'  // 茄境 · 图库
 const TAB_KEY_CIGAR_LIVE = 'cigar_live'        // 茄境 · 图片转Live
 
 // 主导航分组（icon 使用 iconpark 图标名）
@@ -265,6 +268,7 @@ const CIGAR_NAV_GROUPS = [
     icon: 'picture',
     items: [
       { key: TAB_KEY_CIGAR_PRODUCT, label: '产品图片生产', icon: 'picture' },
+      { key: TAB_KEY_CIGAR_GALLERY, label: '图库', icon: 'imageFiles' },
     ],
   },
   {
@@ -476,6 +480,13 @@ export default function App() {
     return DEFAULT_BRAND
   })
   const [brandsMeta, setBrandsMeta] = useState([])
+  // 把品牌主题同步到 <html>：HeroUI 的 Modal/Toast 都是 portal 到 body 的，
+  // 拿不到根 div 上的 data-brand，弹窗内 var(--accent) 会回退成全局默认色
+  // （表现为茄境弹窗里出现云眠的青色）。挂到 html 上后所有浮层都能继承品牌色。
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.documentElement.setAttribute('data-brand', brand || DEFAULT_BRAND)
+  }, [brand])
   // 假登录状态：null = 未登录（显示登录层）
   const [auth, setAuth] = useState(() => loadAuth())
   const handleLogin = (acc) => {
@@ -1039,6 +1050,12 @@ export default function App() {
             <div style={{ display: activeTab === TAB_KEY_CIGAR_PRODUCT ? 'flex' : 'none', flexDirection: 'column', flex: '1 1 auto', height: '100%', minHeight: 0 }}>
               <PageErrorBoundary name="产品图片生产">
                 <MemoCigarProduct brand={brand} account={auth?.type} />
+              </PageErrorBoundary>
+            </div>
+            {/* 茄境 · 图库 */}
+            <div style={{ display: activeTab === TAB_KEY_CIGAR_GALLERY ? 'flex' : 'none', flexDirection: 'column', flex: '1 1 auto', height: '100%', minHeight: 0, padding: '14px 16px' }}>
+              <PageErrorBoundary name="图库">
+                <MemoCigarGallery brand={brand} account={auth?.type} />
               </PageErrorBoundary>
             </div>
             {/* 茄境 · 图片转Live（即将上线） */}

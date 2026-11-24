@@ -712,11 +712,16 @@ export const api = {
   cigarSaveTemplate: (payload) => request('/api/cigar/templates', { method: 'POST', body: JSON.stringify(payload) }),
   cigarRenameTemplate: (payload) => request('/api/cigar/templates/rename', { method: 'POST', body: JSON.stringify(payload) }),
   cigarUpdateTemplate: (payload) => request('/api/cigar/templates/update', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarDeleteTemplate: (payload) => request('/api/cigar/templates/delete', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarRestoreTemplates: () => request('/api/cigar/templates/restore', { method: 'POST', body: JSON.stringify({}) }),
   cigarGenPrompts: (payload) => request('/api/cigar/gen_prompts', { method: 'POST', body: JSON.stringify(payload) }),
   cigarSplit: (payload) => request('/api/cigar/split', { method: 'POST', body: JSON.stringify(payload) }),
   cigarTranslate: (payload) => request('/api/cigar/translate', { method: 'POST', body: JSON.stringify(payload) }),
   cigarGenerate: (payload) => request('/api/cigar/generate', { method: 'POST', body: JSON.stringify(payload) }),
   cigarHistory: () => request('/api/cigar/history'),
+  cigarHistoryRecord: (payload) => request('/api/cigar/history/record', { method: 'POST', body: JSON.stringify(payload) }),
+  cigarGallery: () => request('/api/cigar/gallery'),
+  cigarGalleryDelete: (payload) => request('/api/cigar/gallery/delete', { method: 'POST', body: JSON.stringify(payload) }),
   cigarUploadRef: async (file, brand = 'cigarrealm') => {
     // 参考图上传到 synthesized 桶（引擎 _resolve_ref_url 可解析 /api/image/synthesized/...），
     // 拿到后端地址后再由 ToAPIs 引擎转公网 URL；失败抛错由调用方处理

@@ -4,6 +4,7 @@ import {
   Modal as HeroModal, Input, TextArea,
 } from '@heroui/react'
 import api from '../api'
+import usePasteImages, { normalizePastedImage } from '../hooks/usePasteImages'
 
 // 茄境 · 产品图片生产（6 步向导）
 // ① 选模板  ② 背景/雪茄预设  ③ 上传产品图  ④ 模型/清晰度
@@ -93,7 +94,11 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailTpl, setDetailTpl] = useState(null)   // 编辑中的模板副本
   const [detailBusy, setDetailBusy] = useState(false)
-  const [previewImg, setPreviewImg] = useState('')   // 放大预览的图片 URL
+  const [detailReanalyzing, setDetailReanalyzing] = useState(false)  // 详情弹窗 AI 重新拆解中
+  const [translatingKey, setTranslatingKey] = useState('')           // 正在翻译的那一条：'cam-0' / 'common'
+  const [detailSaving, setDetailSaving] = useState(false)            // 保存中（与 AI 分析分开，避免按钮误导）
+  const [previewImg, setPreviewImg] = useState(null)   // 放大预览：{ url, name }
+  const [expandedAngle, setExpandedAngle] = useState(-1)  // 详情弹窗里展开的角度索引（-1=全收起）
   const detailScrollRef = useRef(null)               // 详情弹窗滚动容器（打开时回到顶部）
   const [background, setBackground] = useState('bg_clean')
   const [cigar, setCigar] = useState('cohiba')
@@ -104,8 +109,12 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
   const [results, setResults] = useState([])
   const [history, setHistory] = useState([])          // 历史生成批次（刷新后仍在）
   const [busy, setBusy] = useState(false)
+  const [genProgress, setGenProgress] = useState(null)  // { done, total, startedAt } 生图真实进度
   const [notice, setNotice] = useState('')
   const [toast, setToast] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState(null)  // 待删除的模板
+  const [deleting, setDeleting] = useState(false)
+  const [hiddenCount, setHiddenCount] = useState(0)       // 已隐藏的内置模板数
   const fileRef = useRef(null)
   const addFileRef = useRef(null)  // 新增模板弹窗内的上传输入
   const [addOpen, setAddOpen] = useState(false)
@@ -115,9 +124,11 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
   const [addImages, setAddImages] = useState([])
   const [addAngles, setAddAngles] = useState([])
   const [addCommon, setAddCommon] = useState('')
+  const [addCommonZh, setAddCommonZh] = useState('')   // 通用提示词中文说明
   const [addName, setAddName] = useState('')
   const [addCat, setAddCat] = useState('')
   const [addSplitting, setAddSplitting] = useState(false)
+  const [addTranslating, setAddTranslating] = useState('')  // 新增模板弹窗里正在翻译的条目
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(''), 3200) }
 
@@ -128,6 +139,7 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
       const tpls = Array.isArray(t?.templates) ? t.templates : []
       setTemplates(tpls)
       setSelectedTpl(prev => prev || tpls[0] || null)
+      setHiddenCount(Number(t?.hiddenCount || 0))
       setPresets(p || { backgrounds: [], cigars: [] })
     } catch (e) { setNotice('加载模板/预设失败：' + (e?.message || e)) }
   }, [])
@@ -135,6 +147,51 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
     try { const r = await api.cigarHistory(); setHistory(Array.isArray(r?.items) ? r.items : []) } catch {}
   }, [])
   useEffect(() => { loadBase(); loadHistory() }, [loadBase, loadHistory])
+
+  // 全局粘贴：当前页有上传区时接管图片粘贴（新增模板弹窗优先，其次步骤③上传区）。
+  // 用共享 hook，只有剪贴板里确实有图片时才拦截，不影响输入框粘贴文本。
+  const uploadAddFilesRef = useRef(null)   // 指向最新的 uploadAddFiles
+  const uploadStepFilesRef = useRef(null)  // 指向最新的 uploadStepFiles
+  const pasteEnabled = (addOpen && addPhase === 1) || step === 3
+  const pasteHandler = useCallback((files) => {
+    if (addOpen && addPhase === 1) uploadAddFilesRef.current?.(files)
+    else uploadStepFilesRef.current?.(files)
+  }, [addOpen, addPhase])
+  usePasteImages(pasteEnabled, pasteHandler)
+
+  // ★ HeroUI v3 的 Modal Backdrop 关闭时靠 CSS 退场动画卸载，
+  // 本项目注入的 .modal__backdrop !important 样式让退场 animationend 不触发，
+  // 导致黑色蒙层(data-exiting=true)永久残留、盖住整页点不动。
+  // 用全局定时巡检兜底：任何处于 data-exiting 且没有配套 dialog 的孤儿蒙层都清掉。
+  // 不依赖 React state（关闭可能经 ESC / 点遮罩 / onOpenChange），最稳。
+  useEffect(() => {
+    const cleanup = () => {
+      const exiting = document.querySelectorAll('.modal__backdrop[data-exiting="true"]')
+      if (!exiting.length) return
+      const liveDialogs = document.querySelectorAll('[role="dialog"]').length
+      if (liveDialogs > 0) return  // 有弹窗正开着/正在退场配对中，别误删
+      exiting.forEach(el => el.remove())
+    }
+    const timer = setInterval(cleanup, 600)
+    return () => clearInterval(timer)
+  }, [])
+
+  // 详情弹窗每次打开都强制回到顶部。HeroModal 挂载/恢复滚动有延迟，
+  // 单次 setTimeout 会落空（用户看到直接从角度03开始），故用 rAF + 多次尝试兜底。
+  useEffect(() => {
+    if (!detailOpen) return
+    const reset = () => {
+      const box = detailScrollRef.current?.querySelector?.('.modal__body--scroll-inside')
+        || document.querySelector('.modal__body--scroll-inside')
+      if (box) box.scrollTop = 0
+      if (detailScrollRef.current) detailScrollRef.current.scrollTop = 0
+    }
+    const r1 = requestAnimationFrame(reset)
+    const t1 = setTimeout(reset, 40)
+    const t2 = setTimeout(reset, 150)
+    const t3 = setTimeout(reset, 350)
+    return () => { cancelAnimationFrame(r1); clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
+  }, [detailOpen, detailTpl?.id])
 
   // 选项变更 → 提示词作废
   const invalidatePrompts = () => { setPrompts([]); setResults([]) }
@@ -161,18 +218,39 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
     } catch (er) { showToast('改名失败：' + (er?.message || er)) }
   }
 
+  // ── 删除模板（带确认；内置模板删除后可从底部「恢复」入口找回） ──
+  const openDelete = (e, t) => { e.stopPropagation(); setDeleteTarget(t) }
+  const doDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const r = await api.cigarDeleteTemplate({ id: deleteTarget.id })
+      const removedId = deleteTarget.id
+      setTemplates(prev => prev.filter(x => x.id !== removedId))
+      setSelectedTpl(prev => (prev?.id === removedId ? null : prev))
+      if (selectedTpl?.id === removedId) invalidatePrompts()
+      if (r?.builtin) setHiddenCount(c => c + 1)
+      setDeleteTarget(null)
+      showToast(`已删除模板「${r?.name || ''}」${r?.builtin ? '（内置模板，可在底部恢复）' : ''}`)
+    } catch (er) { showToast('删除失败：' + (er?.message || er)) }
+    finally { setDeleting(false) }
+  }
+  const doRestoreBuiltins = async () => {
+    try {
+      await api.cigarRestoreTemplates()
+      await loadBase()
+      setHiddenCount(0)
+      showToast('已恢复所有内置模板')
+    } catch (er) { showToast('恢复失败：' + (er?.message || er)) }
+  }
+
   // ── 模板详情：查看/手改/AI 重析 ──
   const openDetail = (e, t) => {
     e.stopPropagation()
     setDetailTpl(JSON.parse(JSON.stringify(t)))  // 深拷贝，编辑不污染列表
+    setExpandedAngle(-1)  // 默认全部收起：5 个角度一屏全可见，点哪行展开哪行
     setDetailOpen(true)
-    // 弹窗沿用上次滚动位置会让人以为角度 1-3 不见了 → 打开时强制回到顶部。
-    // 真正的滚动容器是 HeroModal.Body 渲染出的 .modal__body--scroll-inside，不是 Dialog。
-    setTimeout(() => {
-      const box = detailScrollRef.current?.querySelector?.('.modal__body--scroll-inside')
-      if (box) box.scrollTop = 0
-      else if (detailScrollRef.current) detailScrollRef.current.scrollTop = 0
-    }, 50)
+    // 置顶由下方 useEffect(detailOpen) 负责（rAF + 多次兜底，抗 HeroModal 挂载延迟）
   }
   const detailSetAngle = (i, field, val) => setDetailTpl(prev => ({
     ...prev, angles: (prev.angles || []).map((a, j) => j === i ? { ...a, [field]: val } : a),
@@ -184,7 +262,9 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
       ? (detailTpl.commonPromptZh || '')
       : (detailTpl.angles?.[i]?.camZh || '')
     if (!zh.trim()) { showToast('请先填写中文说明'); return }
+    const key = kind === 'common' ? 'common' : `cam-${i}`
     setDetailBusy(true)
+    setTranslatingKey(key)   // 只让被点的那一条显示「翻译中…」，其他照常
     try {
       const r = await api.cigarTranslate({ text: zh, kind: kind === 'common' ? 'common' : 'cam' })
       if (kind === 'common') {
@@ -195,14 +275,25 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
       }
       showToast('已同步英文（AI 翻译）')
     } catch (er) { showToast('翻译失败：' + (er?.message || er)) }
-    finally { setDetailBusy(false) }
+    finally { setDetailBusy(false); setTranslatingKey('') }
   }
-  const detailAddAngle = () => setDetailTpl(prev => ({
-    ...prev, angles: [...(prev.angles || []), { code: String((prev.angles?.length || 0) + 1).zfill(2), name: '新角度', cam: '', img: '' }],
-  }))
-  const detailDelAngle = (i) => setDetailTpl(prev => ({
-    ...prev, angles: (prev.angles || []).filter((_, j) => j !== i).map((a, j) => ({ ...a, code: String(j + 1).zfill(2) })),
-  }))
+  const detailAddAngle = () => {
+    // 注意：JS 没有 zfill（Python 才有），这里用 padStart，否则点「添加角度」直接抛错
+    setDetailTpl(prev => {
+      const next = [...(prev.angles || []), {
+        code: String((prev.angles?.length || 0) + 1).padStart(2, '0'), name: '新角度', cam: '', camZh: '', img: '',
+      }]
+      setExpandedAngle(next.length - 1)  // 新增后自动展开该角度
+      return { ...prev, angles: next }
+    })
+  }
+  const detailDelAngle = (i) => {
+    setDetailTpl(prev => ({
+      ...prev,
+      angles: (prev.angles || []).filter((_, j) => j !== i).map((a, j) => ({ ...a, code: String(j + 1).padStart(2, '0') })),
+    }))
+    setExpandedAngle(prev => (prev === i ? -1 : prev > i ? prev - 1 : prev))
+  }
   const detailSetRef = (i, field, val) => setDetailTpl(prev => ({
     ...prev, refImages: (prev.refImages || []).map((r, j) => j === i ? { ...r, [field]: val } : r),
   }))
@@ -216,6 +307,7 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
   const detailReanalyze = async () => {
     if (!detailTpl) return
     setDetailBusy(true)
+    setDetailReanalyzing(true)
     try {
       const imgs = (detailTpl.refImages || []).map(r => r.url).filter(Boolean)
         .map(u => (u.startsWith('http') ? u : (api.baseUrl || '') + u))
@@ -235,13 +327,14 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
         showToast('AI 未返回角度，请手动修改')
       }
     } catch (er) { showToast('AI 分析失败：' + (er?.message || er)) }
-    finally { setDetailBusy(false) }
+    finally { setDetailBusy(false); setDetailReanalyzing(false) }
   }
   // 保存详情
   const detailSave = async () => {
     if (!detailTpl) return
     if (!detailTpl.angles?.length) { showToast('至少保留一个角度'); return }
     setDetailBusy(true)
+    setDetailSaving(true)
     try {
       const r = await api.cigarUpdateTemplate({
         id: detailTpl.id, name: (detailTpl.name || '').trim(), cat: detailTpl.cat || '',
@@ -256,24 +349,32 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
       invalidatePrompts()
       showToast('模板详情已保存')
     } catch (er) { showToast('保存失败：' + (er?.message || er)) }
-    finally { setDetailBusy(false) }
+    finally { setDetailBusy(false); setDetailSaving(false) }
   }
 
   // 上传产品图（真实上传到后端）
   const onFiles = async (e) => {
     const files = Array.from(e.target.files || [])
-    if (!files.length) return
+    if (files.length) await uploadStepFiles(files)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+  // 真正上传一批文件到 uploaded（文件选择与 ⌘V 粘贴共用）
+  const uploadStepFiles = async (files) => {
+    if (!files?.length) return
     setBusy(true)
     try {
+      let ok = 0
       for (const f of files) {
-        const saved = await api.cigarUploadRef(f, brand)
-        if (saved?.url) setUploaded(prev => [...prev, { url: saved.url, name: f.name }])
+        const file = normalizePastedImage(f)   // 粘贴来的图常无文件名，补名再传
+        const saved = await api.cigarUploadRef(file, brand)
+        if (saved?.url) { setUploaded(prev => [...prev, { url: saved.url, name: file.name }]); ok += 1 }
       }
       invalidatePrompts()
-      showToast(`已上传 ${files.length} 张产品图`)
+      showToast(ok ? `已上传 ${ok} 张产品图` : '上传失败：未拿到图片地址')
     } catch (er) { showToast('上传失败：' + (er?.message || er)) }
-    finally { setBusy(false); if (fileRef.current) fileRef.current.value = '' }
+    finally { setBusy(false) }
   }
+  uploadStepFilesRef.current = uploadStepFiles  // 供全局粘贴监听器调用最新版
 
   // 使用示例产品图（无需上传，便于演示）
   const useDemoImages = () => {
@@ -315,42 +416,70 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
     if (bgReady) refImgs.push('/api/cigar/preset/bg_clean.png')
     if (cgReady) refImgs.push('/api/cigar/preset/cigar_cohiba.jpg')
     try {
-      const r = await api.cigarGenerate({
-        brand, prompts: prompts.map(p => p.prompt), refImages: refImgs, model, resolution, ratio: '3:4',
-      })
-      setResults(Array.isArray(r?.items) ? r.items : [])
+      // 逐张调用（而不是一次提交整批）：这样每完成一张就能立刻出图，
+      // 用户能看到"第 2/5 张 · 已用时 1:20"的真实进度，而不是干等几分钟黑屏。
+      const list = prompts.map(p => p.prompt)
+      const initial = list.map((_, i) => ({ code: String(i + 1).padStart(2, '0'), status: 'pending' }))
+      setResults(initial)
+      setGenProgress({ done: 0, total: list.length, startedAt: Date.now() })
+      const collected = []
+      for (let i = 0; i < list.length; i += 1) {
+        setResults(prev => prev.map((x, j) => (j === i ? { ...x, status: 'running' } : x)))
+        try {
+          const r = await api.cigarGenerate({
+            brand, prompts: [list[i]], refImages: refImgs, model, resolution, ratio: '3:4',
+            recordHistory: false,                  // 逐张调用不写历史，全部完成后汇总记一条
+          })
+          const item = (r?.items && r.items[0]) || { code: initial[i].code, status: 'fail', error: '无返回' }
+          const withCode = { ...item, code: initial[i].code }
+          collected.push(withCode)
+          setResults(prev => prev.map((x, j) => (j === i ? withCode : x)))
+        } catch (e) {
+          const failed = { code: initial[i].code, status: 'fail', error: (e?.message || String(e)).slice(0, 200) }
+          collected.push(failed)
+          setResults(prev => prev.map((x, j) => (j === i ? failed : x)))
+        }
+        setGenProgress(p => (p ? { ...p, done: p.done + 1 } : p))
+      }
+      // 汇总写一条历史
+      try { await api.cigarHistoryRecord({ model, resolution, items: collected }) } catch {}
       loadHistory()
-      showToast('生图完成，请在下方查看结果')
+      const okCount = collected.filter(x => x.status === 'done').length
+      showToast(`生图完成：成功 ${okCount}/${collected.length} 张，已归档到「图库」`)
     } catch (e) { showToast('生图失败：' + (e?.message || e)) }
-    finally { setBusy(false) }
+    finally { setBusy(false); setGenProgress(null) }
   }
 
   // 新增模板：AI 自动拆解
-  const openAdd = () => { setAddPhase(1); setAddImages([]); setAddAngles([]); setAddCommon(''); setAddName(''); setAddCat(''); setAddOpen(true) }
+  const openAdd = () => { setAddPhase(1); setAddImages([]); setAddAngles([]); setAddCommon(''); setAddCommonZh(''); setAddName(''); setAddCat(''); setAddOpen(true) }
   const addDemoImages = () => setAddImages(['/api/cigar/preset/product_front.png', '/api/cigar/preset/product_45.png'])
   // 新增模板弹窗内真实上传产品图（支持多选），与步骤③同一后端上传接口
   const onAddFiles = async (e) => {
     const files = Array.from(e.target.files || [])
-    if (!files.length) return
+    if (files.length) await uploadAddFiles(files)
+    if (addFileRef.current) addFileRef.current.value = ''
+  }
+  // 真正上传一批文件到 addImages（文件选择与粘贴共用）
+  const uploadAddFiles = async (files) => {
+    if (!files?.length) return
     setAddSplitting(true)
     try {
       const urls = []
       for (const f of files) {
-        const saved = await api.cigarUploadRef(f, brand)
+        const file = normalizePastedImage(f)   // 粘贴图无文件名时按 MIME 补名
+        const saved = await api.cigarUploadRef(file, brand)
         if (saved?.url) urls.push(saved.url)
       }
       if (urls.length) {
         setAddImages(prev => [...prev, ...urls])
-        showToast(`已上传 ${urls.length} 张产品图（准备交给 AI 拆解）`)
+        showToast(`已添加 ${urls.length} 张产品图（准备交给 AI 拆解）`)
       } else {
         showToast('上传失败：未拿到图片地址')
       }
     } catch (er) { showToast('上传失败：' + (er?.message || er)) }
-    finally {
-      setAddSplitting(false)
-      if (addFileRef.current) addFileRef.current.value = ''
-    }
+    finally { setAddSplitting(false) }
   }
+  uploadAddFilesRef.current = uploadAddFiles  // 供全局粘贴监听器调用最新版
   const doSplit = async () => {
     if (!addImages.length) { showToast('请至少上传一张产品图'); return }
     setAddSplitting(true); setAddPhase(2)
@@ -360,17 +489,33 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
       const r = await api.cigarSplit({ images: imgs, cat: addCat || '雪茄周边' })
       setAddAngles(Array.isArray(r?.angles) ? r.angles : [])
       setAddCommon(r?.commonPrompt || '')
+      setAddCommonZh(r?.commonPromptZh || '')
       if (r?.fallback) showToast(r.message || '已回退到内置五视角结构')
       else showToast(`AI 已拆解出 ${r?.angles?.length || 0} 个角度`)
     } catch (e) { showToast('AI 拆解失败：' + (e?.message || e)) }
     finally { setAddSplitting(false) }
+  }
+  // 新增模板阶段：中文说明 → 英文提示词（供「同步英文」按钮，与详情弹窗同一套 AI 翻译）
+  const addSyncEn = async (i, kind) => {
+    const zh = kind === 'common' ? addCommonZh : (addAngles?.[i]?.camZh || '')
+    if (!zh.trim()) { showToast('请先填写中文说明'); return }
+    setAddSplitting(true)
+    setAddTranslating(kind === 'common' ? 'common' : `cam-${i}`)
+    try {
+      const r = await api.cigarTranslate({ text: zh, kind: kind === 'common' ? 'common' : 'cam' })
+      if (kind === 'common') setAddCommon(r.text)
+      else setAddAngles(prev => prev.map((x, j) => (j === i ? { ...x, cam: r.text } : x)))
+      showToast('已同步英文（AI 翻译）')
+    } catch (er) { showToast('翻译失败：' + (er?.message || er)) }
+    finally { setAddSplitting(false); setAddTranslating('') }
   }
   const saveTpl = async () => {
     if (!addName.trim() || !addAngles.length) { showToast('请填写模板名称并完成拆解'); return }
     try {
       const r = await api.cigarSaveTemplate({
         name: addName.trim(), cat: addCat.trim(), angles: addAngles,
-        commonPrompt: addCommon, refCount: addImages.length, thumb: addImages[0] || '',
+        commonPrompt: addCommon, commonPromptZh: addCommonZh,
+        refCount: addImages.length, thumb: addImages[0] || '',
       })
       await loadBase()
       if (r?.template) { setSelectedTpl(r.template); invalidatePrompts() }
@@ -426,6 +571,11 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
               <button title="查看/编辑模板详情" onClick={e => openDetail(e, t)}
                 style={{ position: 'absolute', top: 7, right: 7, background: 'rgba(0,0,0,.5)', border: '1px solid rgba(255,255,255,.35)',
                   borderRadius: 6, color: '#fff', fontSize: 10.5, padding: '3px 8px', cursor: 'pointer', zIndex: 2 }}>详情</button>
+              {/* 删除模板 */}
+              <button title="删除此模板" onClick={e => openDelete(e, t)}
+                style={{ position: 'absolute', top: 7, left: 7, background: 'rgba(0,0,0,.5)', border: '1px solid rgba(255,255,255,.35)',
+                  borderRadius: 6, color: '#ff6b6b', fontSize: 11, width: 22, height: 22, lineHeight: '20px', padding: 0,
+                  cursor: 'pointer', zIndex: 2 }}>✕</button>
               {/* 标题浮在图片底部：10% 透明度黑色蒙层 + 白字；点标题可直接改名 */}
               <div onClick={e => { e.stopPropagation(); startRename(e, t) }}
                 style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.1)',
@@ -453,6 +603,13 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
             </div>
           </div>
         </div>
+        {hiddenCount > 0 && <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--muted)' }}>
+          已删除 {hiddenCount} 个内置模板 ·{' '}
+          <button onClick={doRestoreBuiltins}
+            style={{ background: 'transparent', border: 'none', color: 'var(--accent)', fontSize: 11.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+            恢复内置模板
+          </button>
+        </div>}
         {selectedTpl && <div style={{ marginTop: 18, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 15 }}>
           <h4 style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 11 }}>该模板的角度拆解 · {selectedTpl.name}</h4>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -484,7 +641,8 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
           style={{ border: '1.5px dashed var(--border)', borderRadius: 12, minHeight: 120, display: 'grid', placeItems: 'center',
             textAlign: 'center', color: 'var(--muted)', background: 'var(--surface-2)', cursor: 'pointer' }}>
           <div><div style={{ fontSize: 28, color: 'var(--accent)' }}>＋</div>
-            {busy ? '上传中…' : '点击上传产品图片（支持多选）'}</div>
+            {busy ? '上传中…' : '点击上传产品图片（支持多选）'}
+            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>也可直接 ⌘V / Ctrl+V 粘贴剪贴板图片</div></div>
         </div>
         <HeroButton size="sm" variant="flat" onPress={useDemoImages} style={{ marginTop: 12 }}>填入 2 张示例产品图</HeroButton>
         {uploaded.length > 0 && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}>
@@ -513,8 +671,20 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
           </div>)}
         </div>
         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>清晰度</div>
-        <div style={{ display: 'flex', gap: 9 }}>
-          {RESOLUTIONS.map(r => <HeroButton key={r} variant={r === resolution ? 'solid' : 'flat'} color={r === resolution ? 'primary' : 'default'} onPress={() => changeRes(r)}>{r}</HeroButton>)}
+        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+          {RESOLUTIONS.map(r => {
+            const sel = r === resolution
+            return <div key={r} onClick={() => changeRes(r)} role="radio" aria-checked={sel} tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); changeRes(r) } }}
+              style={{ border: sel ? '2px solid var(--accent)' : '1px solid var(--border)', borderRadius: 10,
+                padding: sel ? '8px 22px' : '9px 23px',      // 边框变粗时补偿 1px，避免选中时跳动
+                cursor: 'pointer', background: sel ? 'var(--surface-3)' : 'var(--surface-2)',
+                color: sel ? 'var(--accent)' : 'var(--foreground)', fontWeight: sel ? 700 : 500, fontSize: 13,
+                display: 'flex', alignItems: 'center', gap: 6, transition: 'all .15s ease',
+                outline: 'none', userSelect: 'none' }}>
+              {r}{sel && <span style={{ fontSize: 11, lineHeight: 1 }}>✓</span>}
+            </div>
+          })}
         </div>
         <div style={{ fontSize: 12, fontWeight: 600, margin: '22px 0 10px' }}>画面比例</div>
         <Chip variant="flat" color="primary">3:4（模板固定）</Chip>
@@ -524,11 +694,27 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
       {step === 5 && <Panel step="STEP 5" title="AI 生成提示词 · 人工确认"
         sub="AI 会先读取步骤③上传的产品图，提炼产品的真实材质/颜色/形态，再结合模板骨架（各角度机位句 + 通用提示词）生成每条最终英文提示词。同一模板换产品图，角度一致、产品细节跟着图走。确认无误后再生产。"
         actions={<><HeroButton variant="ghost" onPress={() => goStep(4)}>← 上一步</HeroButton><div style={{ flex: 1 }} />
-          <HeroButton variant="flat" color="primary" onPress={doGenPrompts} isLoading={busy}>{prompts.length ? '🔄 重新生成提示词' : '✨ 生成提示词'}</HeroButton>
-          <HeroButton color="primary" onPress={() => goStep(6)} isDisabled={!prompts.length}>确认提示词并生产 →</HeroButton></>}>
-        {!prompts.length ? <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>
-          点击下方「生成提示词」：AI 读图后按模板骨架生成 {selectedTpl?.angles?.length || 0} 条最终提示词（需先在步骤③上传产品图）
-        </div> : <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <HeroButton variant="flat" color="primary" onPress={doGenPrompts} isLoading={busy}>
+            {busy ? '生成中…' : (prompts.length ? '🔄 重新生成提示词' : '✨ 生成提示词')}
+          </HeroButton>
+          <HeroButton color="primary" onPress={() => goStep(6)} isDisabled={!prompts.length || busy}>确认提示词并生产 →</HeroButton></>}>
+        {!prompts.length ? (busy
+          ? <div style={{ textAlign: 'center', padding: 44 }}>
+              <Spinner size="lg" />
+              <div style={{ fontSize: 13, color: 'var(--accent)', marginTop: 14, fontWeight: 600 }}>AI 正在读你上传的产品图…</div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.7 }}>
+                提炼产品的材质 / 颜色 / 形态，再按模板骨架组装 {selectedTpl?.angles?.length || 0} 条英文提示词
+                <br />通常需要 10–30 秒，请稍候
+              </div>
+            </div>
+          : <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>
+              点击下方「生成提示词」：AI 读图后按模板骨架生成 {selectedTpl?.angles?.length || 0} 条最终提示词（需先在步骤③上传产品图）
+            </div>) : <div style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: busy ? 0.45 : 1, transition: 'opacity .2s', pointerEvents: busy ? 'none' : 'auto' }}>
+          {busy && <div style={{ display: 'flex', alignItems: 'center', gap: 9, border: '1px solid var(--accent)',
+            borderRadius: 9, background: 'rgba(240,169,59,.08)', padding: '9px 12px' }}>
+            <Spinner size="sm" />
+            <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>正在重新生成提示词…（AI 读图中，10–30 秒）</span>
+          </div>}
           {prompts.map((p, i) => <PromptCard key={p.code} p={p} defaultOpen={i === 0}
             onChange={(field, val) => setPrompts(prev => prev.map((x, j) => j === i ? {
               ...x, [field]: val,
@@ -541,17 +727,51 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
       {/* STEP 6 结果 */}
       {step === 6 && <Panel step="STEP 6" title="生成结果"
         sub="按确认的提示词逐角度调用生图模型。每张图片真实生成，结果与提示词一一对应。"
-        actions={<><HeroButton variant="ghost" onPress={() => goStep(5)}>← 上一步</HeroButton><div style={{ flex: 1 }} />
-          <HeroButton color="primary" onPress={doGenerate} isLoading={busy}>🚀 开始生产 {prompts.length} 张产品图</HeroButton></>}>
+        actions={<><HeroButton variant="ghost" onPress={() => goStep(5)} isDisabled={busy && !!genProgress}>← 上一步</HeroButton><div style={{ flex: 1 }} />
+          <HeroButton color="primary" onPress={doGenerate} isLoading={busy}
+            isDisabled={busy && !!genProgress}>
+            {busy && genProgress ? `生成中 ${genProgress.done}/${genProgress.total}…` : `🚀 开始生产 ${prompts.length} 张产品图`}
+          </HeroButton></>}>
+        {/* 生成中的强反馈：进度条 + 计时 + 说明，让人一眼知道"正在跑" */}
+        {genProgress && <div style={{ marginBottom: 16, border: '1px solid var(--accent)', borderRadius: 11,
+          background: 'rgba(240,169,59,.08)', padding: '13px 15px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 9 }}>
+            <Spinner size="sm" />
+            <b style={{ fontSize: 13, color: 'var(--accent)' }}>
+              AI 正在生成第 {Math.min(genProgress.done + 1, genProgress.total)} / {genProgress.total} 张…
+            </b>
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+              已完成 {genProgress.done} 张 · 已用 <GenElapsed startedAt={genProgress.startedAt} />
+            </span>
+          </div>
+          <div style={{ height: 6, borderRadius: 3, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', borderRadius: 3, background: 'var(--accent)',
+              width: `${genProgress.total ? (genProgress.done / genProgress.total) * 100 : 0}%`,
+              transition: 'width .35s ease' }} />
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 8 }}>
+            每张约 40–130 秒，请保持页面打开。完成的图会立刻出现在下方。
+          </div>
+        </div>}
         {!results.length ? <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>
           点击「开始生产」后，{prompts.length} 个角度将逐一调用生图模型（每张约 40-130 秒）
         </div> : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 13 }}>
-          {results.map((r, i) => <Card key={i} variant="default" style={{ border: '1px solid var(--border)', borderRadius: 11, overflow: 'hidden', background: 'var(--surface-2)' }}>
+          {results.map((r, i) => <Card key={i} variant="default" style={{ border: r.status === 'running' ? '1px solid var(--accent)' : '1px solid var(--border)',
+            borderRadius: 11, overflow: 'hidden', background: 'var(--surface-2)' }}>
             <div style={{ aspectRatio: '3/4', background: '#0a0c10', position: 'relative' }}>
               {r.status === 'done' && r.url
                 ? <img src={imgSrc(r.url)} alt={`角度${r.code}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: 'var(--danger)', fontSize: 11, padding: 10, textAlign: 'center' }}>{r.error || '生成失败'}</div>}
+                : r.status === 'running'
+                  ? <div style={{ display: 'grid', placeItems: 'center', height: '100%', gap: 10 }}>
+                      <Spinner size="lg" />
+                      <span style={{ fontSize: 11, color: 'var(--accent)' }}>生成中…</span>
+                    </div>
+                  : r.status === 'pending'
+                    ? <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: 'var(--muted)', fontSize: 11 }}>排队中</div>
+                    : <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: 'var(--danger)', fontSize: 11, padding: 10, textAlign: 'center' }}>{r.error || '生成失败'}</div>}
               {r.status === 'done' && <Chip size="sm" color="success" variant="flat" style={{ position: 'absolute', top: 7, left: 7 }}>✓ {resolution} 完成</Chip>}
+              {r.status === 'running' && <Chip size="sm" variant="flat" style={{ position: 'absolute', top: 7, left: 7 }}>⏳ 生成中</Chip>}
             </div>
             <Card.Content style={{ padding: '9px 10px' }}>
               <b style={{ fontSize: 11.5 }}>{r.code} {prompts[i]?.name || ''}</b>
@@ -595,7 +815,8 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
                 <div onClick={() => addFileRef.current?.click()} style={{ border: '1.5px dashed var(--border)', borderRadius: 12, minHeight: 120,
                   display: 'grid', placeItems: 'center', textAlign: 'center', color: 'var(--muted)', background: 'var(--surface-2)', cursor: 'pointer' }}>
                   <div><div style={{ fontSize: 28, color: 'var(--accent)' }}>＋</div>
-                    {addSplitting ? '上传中…' : '点击上传产品多角度实拍（支持多选）'}</div>
+                    {addSplitting ? '上传中…' : '点击上传产品多角度实拍（支持多选）'}
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>也可直接 ⌘V / Ctrl+V 粘贴剪贴板图片</div></div>
                 </div>
                 <HeroButton size="sm" variant="flat" onPress={addDemoImages} style={{ marginTop: 10 }}>填入 2 张示例产品图（演示用）</HeroButton>
                 {addImages.length > 0 && <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
@@ -613,16 +834,43 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
                 {addSplitting ? <div style={{ textAlign: 'center', padding: 30 }}><Spinner size="lg" /><p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 12 }}>AI 正在识别产品、拆分角度、生成机位句…</p></div>
                   : <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 11, padding: 14 }}>
                     <div style={{ fontSize: 12.5, marginBottom: 12 }}>✓ 已拆解出 <b style={{ color: 'var(--accent)' }}>{addAngles.length}</b> 个角度（可编辑）</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 12 }}>
+                      每个角度 = 角度名 + 中文说明（给人看）+ 英文机位句（进生图）。可改中文后点「↻ 同步英文」让 AI 重新翻译英文。
+                    </div>
                     {addAngles.map((a, i) => <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 9, padding: 10, marginBottom: 8, display: 'flex', gap: 10 }}>
-                      <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 12 }}>{a.code}</span>
-                      <div style={{ flex: 1 }}>
-                        <Input size="sm" value={a.name} onChange={e => setAddAngles(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} aria-label="角度名" />
-                        <TextArea size="sm" value={a.cam} onChange={e => setAddAngles(prev => prev.map((x, j) => j === i ? { ...x, cam: e.target.value } : x))}
-                          aria-label="机位句" style={{ marginTop: 6 }} />
+                      <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 12, paddingTop: 4 }}>{a.code}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Input size="sm" value={a.name} onChange={e => setAddAngles(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} aria-label="角度名" placeholder="角度名" />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 4px' }}>
+                          <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>中文说明（可改 · 不进生图）</span>
+                          <button onClick={() => addSyncEn(i, 'cam')} disabled={addSplitting}
+                            title="用 AI 把这段中文翻译成下方英文"
+                            style={{ background: addTranslating === `cam-${i}` ? 'var(--accent)' : 'transparent',
+                              border: '1px solid var(--accent)', borderRadius: 5,
+                              color: addTranslating === `cam-${i}` ? 'var(--accent-foreground)' : 'var(--accent)',
+                              fontSize: 10, padding: '1px 7px', cursor: addSplitting ? 'wait' : 'pointer' }}>
+                            {addTranslating === `cam-${i}` ? '翻译中…' : '↻ 同步英文'}</button>
+                        </div>
+                        <AutoTextArea value={a.camZh || ''} onChange={v => setAddAngles(prev => prev.map((x, j) => j === i ? { ...x, camZh: v } : x))}
+                          ariaLabel="机位句中文" placeholder="这个机位的中文说明" />
+                        <div style={{ fontSize: 10.5, color: 'var(--muted)', margin: '8px 0 4px' }}>英文机位句（进生图 · 零中文）</div>
+                        <AutoTextArea value={a.cam || ''} onChange={v => setAddAngles(prev => prev.map((x, j) => j === i ? { ...x, cam: v } : x))}
+                          ariaLabel="机位句" placeholder="English camera sentence" />
                       </div>
                     </div>)}
-                    <div style={{ fontSize: 11, color: 'var(--muted)', margin: '8px 0 5px' }}>通用提示词（英文，可编辑）</div>
-                    <TextArea value={addCommon} onChange={e => setAddCommon(e.target.value)} rows={4} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0 4px' }}>
+                      <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>通用提示词 · 中文说明（可改 · 不进生图）</span>
+                      <button onClick={() => addSyncEn(0, 'common')} disabled={addSplitting}
+                        title="用 AI 把这段中文翻译成下方英文"
+                        style={{ background: addTranslating === 'common' ? 'var(--accent)' : 'transparent',
+                          border: '1px solid var(--accent)', borderRadius: 5,
+                          color: addTranslating === 'common' ? 'var(--accent-foreground)' : 'var(--accent)',
+                          fontSize: 10, padding: '1px 7px', cursor: addSplitting ? 'wait' : 'pointer' }}>
+                        {addTranslating === 'common' ? '翻译中…' : '↻ 同步英文'}</button>
+                    </div>
+                    <AutoTextArea value={addCommonZh} onChange={v => setAddCommonZh(v)} ariaLabel="通用提示词中文" placeholder="通用提示词的中文说明" />
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)', margin: '8px 0 4px' }}>通用提示词 · 英文（进生图 · 零中文）</div>
+                    <AutoTextArea value={addCommon} onChange={v => setAddCommon(v)} ariaLabel="通用提示词" placeholder="English common prompt" />
                   </div>}
               </div>}
               <div style={{ fontSize: 12, color: addPhase >= 3 ? 'var(--accent)' : 'var(--muted)', marginTop: 14 }}>③ 确认并保存为模板</div>
@@ -635,6 +883,8 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
               </div>}
             </HeroModal.Body>
             <HeroModal.Footer>
+              {/* 取消：任意阶段都可退出，避免用户中途想放弃却只能按 ESC 才能关 */}
+              <HeroButton variant="ghost" onPress={() => setAddOpen(false)} isDisabled={addSplitting}>取消</HeroButton>
               {addPhase > 1 && <HeroButton variant="ghost" onPress={() => setAddPhase(p => p - 1)}>上一步</HeroButton>}
               <div style={{ flex: 1 }} />
               {addPhase === 1 && <HeroButton color="primary" onPress={doSplit} isDisabled={!addImages.length}>开始 AI 拆解 →</HeroButton>}
@@ -652,45 +902,71 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
           <HeroModal.Dialog ref={detailScrollRef} style={{ width: 960, maxWidth: '94vw', maxHeight: '88vh', zIndex: 99999, overflow: 'auto' }}>
             <HeroModal.Header><HeroModal.Heading>模板详情 · {detailTpl?.name || ''}</HeroModal.Heading></HeroModal.Header>
             {detailTpl && <HeroModal.Body>
-              {/* 基本信息 */}
-              <div style={{ display: 'flex', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>模板名称</div>
-                  <Input value={detailTpl.name || ''} onChange={e => setDetailTpl(p => ({ ...p, name: e.target.value }))} aria-label="模板名称" />
-                </div>
-                <div style={{ width: 180 }}>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>适用品类</div>
-                  <Input value={detailTpl.cat || ''} onChange={e => setDetailTpl(p => ({ ...p, cat: e.target.value }))} aria-label="适用品类" />
-                </div>
+              {/* 基本信息（压缩成一行，给角度列表让出高度） */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                <Input size="sm" value={detailTpl.name || ''} onChange={e => setDetailTpl(p => ({ ...p, name: e.target.value }))}
+                  aria-label="模板名称" placeholder="模板名称" style={{ flex: 1 }} />
+                <Input size="sm" value={detailTpl.cat || ''} onChange={e => setDetailTpl(p => ({ ...p, cat: e.target.value }))}
+                  aria-label="适用品类" placeholder="适用品类" style={{ width: 140 }} />
               </div>
 
               {/* ① 角度提示词模板 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <b style={{ fontSize: 13 }}>① 角度提示词模板</b>
-                <Chip size="sm" variant="flat" color="primary">{(detailTpl.angles || []).length} 个角度（{(detailTpl.angles || [])[0]?.code || '01'}–{(detailTpl.angles || []).slice(-1)[0]?.code || '05'}，向下滚动查看全部）</Chip>
+                <Chip size="sm" variant="flat" color="primary">{(detailTpl.angles || []).length} 个角度（{(detailTpl.angles || [])[0]?.code || '01'}–{(detailTpl.angles || []).slice(-1)[0]?.code || '05'}）</Chip>
                 <div style={{ flex: 1 }} />
-                <HeroButton size="sm" variant="flat" color="primary" onPress={detailReanalyze} isLoading={detailBusy}>✨ AI 重新分析生成</HeroButton>
+                <HeroButton size="sm" variant="flat" color="primary" onPress={detailReanalyze} isLoading={detailReanalyzing}>
+                  {detailReanalyzing ? '分析中…' : '✨ AI 重新分析生成'}
+                </HeroButton>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.6,
-                background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 11px' }}>
-                <b style={{ color: 'var(--accent)' }}>这里的提示词是「模板」，不是最终生图提示词。</b><br />
-                每个角度 = 缩略图 + 角度名 + 英文机位句（附中文翻译方便理解）。真正生图时，会在步骤 ⑤ 结合你本次上传的产品图、选定的背景/雪茄，由 AI 按这些模板组装出最终提示词——所以同一模板换一批产品图，成品角度一致、花色/产品本身跟着上传图走。<br />
-                缩略图可点开放大、可改地址；可逐条手改或点上方「AI 重新分析生成」按垫图重新拆解（改完需点保存）。
+              {detailReanalyzing && <div style={{ display: 'flex', alignItems: 'center', gap: 9, border: '1px solid var(--accent)',
+                borderRadius: 9, background: 'rgba(240,169,59,.08)', padding: '10px 12px', marginBottom: 10 }}>
+                <Spinner size="sm" />
+                <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>AI 正在按垫图重新拆解角度…</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>约 15–30 秒，完成后角度列表会自动刷新</span>
+              </div>}
+              <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.5 }}>
+                提示词是<b style={{ color: 'var(--accent)' }}>模板骨架</b>：点角度行展开编辑，最终生图提示词由步骤⑤ AI 结合上传图生成。缩略图可点开放大。
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
-                {(detailTpl.angles || []).map((a, i) => (
-                  <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--surface-2)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                      <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 12 }}>角度 {a.code}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 20 }}>
+                {(detailTpl.angles || []).map((a, i) => {
+                  const isOpen = expandedAngle === i
+                  return (
+                  <div key={i} style={{ border: isOpen ? '1px solid var(--accent)' : '1px solid var(--border)', borderRadius: 9,
+                    background: 'var(--surface-2)', overflow: 'hidden' }}>
+                    {/* 折叠头：任何状态都能看到角度编号+名称+缩略图，不再"消失" */}
+                    <div onClick={(e) => {
+                      const willOpen = !isOpen
+                      setExpandedAngle(willOpen ? i : -1)
+                      // 展开后把这张卡片滚到可视区顶部附近，避免展开内容在屏幕外
+                      if (willOpen) {
+                        const card = e.currentTarget.parentElement
+                        setTimeout(() => {
+                          const box = document.querySelector('.modal__body--scroll-inside')
+                          if (box && card) box.scrollTop = Math.max(0, card.offsetTop - box.offsetTop - 8)
+                        }, 60)
+                      }
+                    }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', cursor: 'pointer' }}>
+                      <div style={{ width: 22, height: 28, flex: '0 0 22px', borderRadius: 4, overflow: 'hidden',
+                        background: '#0a0c10', display: 'grid', placeItems: 'center', border: '1px solid var(--border)' }}>
+                        {a.img ? <img src={imgSrc(a.img)} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                          : <span style={{ color: 'var(--muted)', fontSize: 7 }}>—</span>}
+                      </div>
+                      <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 11.5 }}>{a.code}</span>
+                      <b style={{ fontSize: 12 }}>{a.name || '未命名角度'}</b>
+                      {!isOpen && <span style={{ fontSize: 10, color: 'var(--muted)', opacity: .75 }}>· 点击展开编辑</span>}
                       <div style={{ flex: 1 }} />
-                      <button title="删除此角度" onClick={() => detailDelAngle(i)}
-                        style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
-                          color: 'var(--danger)', fontSize: 12, padding: '2px 8px', cursor: 'pointer' }}>✕ 删除</button>
+                      <button title="删除此角度" onClick={e => { e.stopPropagation(); detailDelAngle(i) }}
+                        style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 5,
+                          color: 'var(--danger)', fontSize: 10, padding: '0 6px', cursor: 'pointer', marginRight: 4 }}>✕</button>
+                      <span style={{ color: 'var(--muted)', fontSize: 9, transform: isOpen ? 'rotate(180deg)' : 'none' }}>▼</span>
                     </div>
+                    {isOpen && <div style={{ padding: '0 12px 12px' }}>
                     <div style={{ display: 'flex', gap: 12 }}>
                       {/* 缩略图：点击放大预览 */}
                       <div style={{ flex: '0 0 110px' }}>
-                        <div title="点击放大预览" onClick={() => a.img && setPreviewImg(a.img)}
+                        <div title="点击放大预览" onClick={() => a.img && setPreviewImg({ url: a.img, name: `${a.code} ${a.name || '角度缩略图'}` })}
                           style={{ width: 110, aspectRatio: '3 / 4', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)',
                             background: '#0a0c10', cursor: a.img ? 'zoom-in' : 'default', display: 'grid', placeItems: 'center' }}>
                           {a.img ? <img src={imgSrc(a.img)} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -707,8 +983,11 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
                           <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>中文说明（可改 · 不进生图）</span>
                           <button onClick={() => detailSyncEn(i, 'cam')} disabled={detailBusy}
                             title="用 AI 把这段中文同步翻译成下方英文"
-                            style={{ background: 'transparent', border: '1px solid var(--accent)', borderRadius: 5,
-                              color: 'var(--accent)', fontSize: 10, padding: '1px 7px', cursor: detailBusy ? 'wait' : 'pointer' }}>↻ 同步英文</button>
+                            style={{ background: translatingKey === `cam-${i}` ? 'var(--accent)' : 'transparent',
+                              border: '1px solid var(--accent)', borderRadius: 5,
+                              color: translatingKey === `cam-${i}` ? 'var(--accent-foreground)' : 'var(--accent)',
+                              fontSize: 10, padding: '1px 7px', cursor: detailBusy ? 'wait' : 'pointer' }}>
+                            {translatingKey === `cam-${i}` ? '翻译中…' : '↻ 同步英文'}</button>
                         </div>
                         <AutoTextArea value={a.camZh || ''} onChange={v => detailSetAngle(i, 'camZh', v)} ariaLabel="机位句中文"
                           placeholder="这个机位用中文说明，方便理解" />
@@ -717,8 +996,9 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
                           placeholder="English camera sentence（零中文）" />
                       </div>
                     </div>
+                    </div>}
                   </div>
-                ))}
+                )})}
                 <HeroButton size="sm" variant="ghost" onPress={detailAddAngle}>＋ 添加角度</HeroButton>
               </div>
 
@@ -728,8 +1008,11 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
                 <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>中文说明（可改 · 不进生图）</span>
                 <button onClick={() => detailSyncEn(0, 'common')} disabled={detailBusy}
                   title="用 AI 把这段中文同步翻译成下方英文"
-                  style={{ background: 'transparent', border: '1px solid var(--accent)', borderRadius: 5,
-                    color: 'var(--accent)', fontSize: 10, padding: '1px 7px', cursor: detailBusy ? 'wait' : 'pointer' }}>↻ 同步英文</button>
+                  style={{ background: translatingKey === 'common' ? 'var(--accent)' : 'transparent',
+                    border: '1px solid var(--accent)', borderRadius: 5,
+                    color: translatingKey === 'common' ? 'var(--accent-foreground)' : 'var(--accent)',
+                    fontSize: 10, padding: '1px 7px', cursor: detailBusy ? 'wait' : 'pointer' }}>
+                  {translatingKey === 'common' ? '翻译中…' : '↻ 同步英文'}</button>
               </div>
               <AutoTextArea value={detailTpl.commonPromptZh || ''} onChange={v => setDetailTpl(p => ({ ...p, commonPromptZh: v }))} ariaLabel="通用提示词中文" placeholder="通用提示词中文说明" />
               <div style={{ fontSize: 10.5, color: 'var(--muted)', margin: '8px 0 4px' }}>英文原文（进生图，零中文）</div>
@@ -747,7 +1030,7 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {(detailTpl.refImages || []).map((r, i) => (
                   <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 9, padding: 10, background: 'var(--surface-2)', display: 'flex', gap: 10 }}>
-                    <div title="点击放大预览" onClick={() => r.url && setPreviewImg(r.url)}
+                    <div title="点击放大预览" onClick={() => r.url && setPreviewImg({ url: r.url, name: r.name || '垫图' })}
                       style={{ width: 56, height: 74, flex: '0 0 56px', borderRadius: 6, overflow: 'hidden', background: '#0a0c10', display: 'grid', placeItems: 'center', cursor: r.url ? 'zoom-in' : 'default' }}>
                       {r.url ? <img src={imgSrc(r.url)} alt={r.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <span style={{ color: 'var(--muted)', fontSize: 10 }}>无图</span>}
                     </div>
@@ -767,19 +1050,70 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
             <HeroModal.Footer>
               <HeroButton variant="ghost" onPress={() => setDetailOpen(false)}>取消</HeroButton>
               <div style={{ flex: 1 }} />
-              <HeroButton color="primary" onPress={detailSave} isLoading={detailBusy}>✓ 保存修改</HeroButton>
+              <HeroButton color="primary" onPress={detailSave} isLoading={detailSaving} isDisabled={detailBusy}>✓ 保存修改</HeroButton>
             </HeroModal.Footer>
           </HeroModal.Dialog>
         </HeroModal.Container>
       </HeroModal.Root>
 
-      {/* 缩略图放大预览 */}
-      {previewImg && <div onClick={() => setPreviewImg('')}
-        style={{ position: 'fixed', inset: 0, zIndex: 100001, background: 'rgba(0,0,0,.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out' }}>
-        <img src={imgSrc(previewImg)} alt="预览" onClick={e => e.stopPropagation()}
-          style={{ maxWidth: '86vw', maxHeight: '86vh', objectFit: 'contain', borderRadius: 10, boxShadow: '0 20px 80px rgba(0,0,0,.8)' }} />
-        <div style={{ position: 'absolute', top: 20, right: 24, color: '#fff', fontSize: 22, cursor: 'pointer' }}>✕</div>
-      </div>}
+      {/* 删除模板确认 */}
+      <HeroModal.Root isOpen={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}>
+        <HeroModal.Backdrop style={{ zIndex: 99998 }} />
+        <HeroModal.Container className="z-[99999]" style={{ position: 'fixed', inset: 0, zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+          <HeroModal.Dialog style={{ width: 460, maxWidth: '92vw', zIndex: 99999 }}>
+            <HeroModal.Header><HeroModal.Heading>删除模板</HeroModal.Heading></HeroModal.Header>
+            <HeroModal.Body>
+              <p style={{ fontSize: 13, lineHeight: 1.7 }}>
+                确定删除模板「<b style={{ color: 'var(--accent)' }}>{deleteTarget?.name || ''}</b>」吗？
+              </p>
+              <p style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.6, marginTop: 8 }}>
+                {deleteTarget?.builtin
+                  ? '这是内置模板，删除后不会出现在列表里，之后可以从模板区底部「恢复内置模板」找回。'
+                  : '这是你自建的模板，删除后不可恢复（角度结构、垫图信息会一并删除）。'}
+              </p>
+            </HeroModal.Body>
+            <HeroModal.Footer>
+              <HeroButton variant="ghost" onPress={() => setDeleteTarget(null)}>取消</HeroButton>
+              <div style={{ flex: 1 }} />
+              <HeroButton color="danger" onPress={doDelete} isLoading={deleting}>确认删除</HeroButton>
+            </HeroModal.Footer>
+          </HeroModal.Dialog>
+        </HeroModal.Container>
+      </HeroModal.Root>
+
+      {/* 缩略图放大预览：用 HeroModal 渲染（与详情弹窗同一套机制/top layer），
+          否则普通 div 无论 z-index 多高都会被 HeroUI 的 modal 盖住。 */}
+      <HeroModal.Root isOpen={!!previewImg} onOpenChange={(o) => { if (!o) setPreviewImg(null) }}>
+        <HeroModal.Backdrop style={{ zIndex: 100000 }} />
+        <HeroModal.Container style={{ position: 'fixed', inset: 0, zIndex: 100001,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+          <HeroModal.Dialog style={{ width: 'auto', maxWidth: '92vw', zIndex: 100001, padding: 0, overflow: 'hidden' }}>
+            {previewImg && <>
+              {/* 标题栏 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', borderBottom: '1px solid var(--border)' }}>
+                <b style={{ fontSize: 13 }}>{previewImg.name || '图片预览'}</b>
+                <div style={{ flex: 1 }} />
+                <button onClick={() => setPreviewImg(null)} title="关闭"
+                  style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
+                    color: 'var(--muted)', fontSize: 13, width: 26, height: 26, lineHeight: '22px', cursor: 'pointer', padding: 0 }}>✕</button>
+              </div>
+              {/* 图片区：浅色棋盘底，深色/透明图都能看出边界 */}
+              <div style={{ padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                backgroundColor: '#e9ebef',
+                backgroundImage: 'linear-gradient(45deg,#d8dbe1 25%,transparent 25%),linear-gradient(-45deg,#d8dbe1 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d8dbe1 75%),linear-gradient(-45deg,transparent 75%,#d8dbe1 75%)',
+                backgroundSize: '18px 18px', backgroundPosition: '0 0,0 9px,9px -9px,-9px 0' }}>
+                <img src={imgSrc(previewImg.url)} alt="预览"
+                  style={{ maxWidth: '78vw', maxHeight: '66vh', objectFit: 'contain', display: 'block',
+                    borderRadius: 6, boxShadow: '0 6px 24px rgba(0,0,0,.35)' }} />
+              </div>
+              {/* 底部提示 */}
+              <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 10.5, color: 'var(--muted)' }}>
+                点击空白处或右上角 ✕ 关闭
+              </div>
+            </>}
+          </HeroModal.Dialog>
+        </HeroModal.Container>
+      </HeroModal.Root>
 
       {toast && <div style={{ position: 'fixed', bottom: 26, left: '50%', transform: 'translateX(-50%)',
         background: 'var(--surface-3)', border: '1px solid var(--accent)', borderRadius: 10, padding: '11px 18px',
@@ -788,8 +1122,18 @@ export default function CigarProductStudio({ brand = 'cigarrealm', account }) {
   )
 }
 
-function PresetRow({ label, presets, selected, onSelect }) {
-  return <div>
+// 已用时长（m:ss），每秒自增，让长耗时任务看得出"还在动"
+function GenElapsed({ startedAt }) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const sec = Math.max(0, Math.floor((Date.now() - (startedAt || Date.now())) / 1000))
+  return <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.floor(sec / 60)}:{String(sec % 60).padStart(2, '0')}</span>
+}
+
+function PresetRow({ label, presets, selected, onSelect }) {  return <div>
     <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
       {label}<Chip size="sm" variant="flat" color="primary">系统预设</Chip>
     </div>
@@ -826,8 +1170,12 @@ function PromptCard({ p, defaultOpen, onChange }) {
       </div>
       <div><div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4 }}>机位句骨架（本角度独有）· ANGLE · 改动后点「重新生成提示词」生效</div>
         <TextArea size="sm" value={p.cam} onChange={e => onChange('cam', e.target.value)} rows={2} /></div>
+      {p.camZh && <div style={{ marginTop: -4 }}><div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 2 }}>↳ 中文说明</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>{p.camZh}</div></div>}
       <div><div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4 }}>通用骨架（模板固定）· COMMON</div>
         <TextArea size="sm" value={p.common} onChange={e => onChange('common', e.target.value)} rows={5} /></div>
+      {p.commonZh && <div style={{ marginTop: -4 }}><div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 2 }}>↳ 中文说明</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>{p.commonZh}</div></div>}
       <div style={{ fontSize: 10.5, color: 'var(--warn)' }}>⚠ 零中文铁律：最终提示词不可出现中文，否则会被渲染到图片上。</div>
     </Card.Content>}
   </Card>

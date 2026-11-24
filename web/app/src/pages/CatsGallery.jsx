@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Input, Modal, Toast, Tooltip } from '@douyinfe/semi-ui'
 import api from '../api'
+import usePasteImages, { normalizePastedImage } from '../hooks/usePasteImages'
 import Icon from '../components/Icon'
 
 const BUCKET = 'cats'
@@ -56,6 +57,12 @@ export default function CatsGallery() {
     const files = Array.from(fileInputRef.current?.files || [])
     if (!files.length) return
     fileInputRef.current.value = ''
+    await uploadFiles(files)
+  }
+  // 真正上传（文件选择与 ⌘V 粘贴共用）
+  const uploadFiles = async (rawFiles) => {
+    const files = (rawFiles || []).map(normalizePastedImage).filter(Boolean)
+    if (!files.length) return
     setBusy(true)
     try {
       const r = await api.upload(BUCKET, files)
@@ -64,6 +71,8 @@ export default function CatsGallery() {
     } catch (err) { Toast.error('上传失败: ' + err.message) }
     finally { setBusy(false) }
   }
+  // 本页随时可粘贴图片上传（素材库本身就是上传区）
+  usePasteImages(true, uploadFiles)
 
   const deleteOne = async (name) => {
     try {

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import api, { EXPORT_MAX_FILES, W_ICON, W_LARGE } from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
+import usePasteImages from '../hooks/usePasteImages'
 import { downloadAsZip } from '../utils/packZip'
 import bananaIcon from '../assets/banana-icon.png'
 import { TemplateResultLibrary } from './TemplateStudio'
@@ -538,6 +539,10 @@ function SimpleDropzone({ bucket, onUploaded, fileInputRef, busy, setBusy, trigg
     document.addEventListener('paste', global, true)
     return () => document.removeEventListener('paste', global, true)
   }, [pasteActive, _uploadFiles])
+
+  // 输入框内粘贴图片也要能上传：只按"剪贴板里是否真有图片"判断，
+  // 是老版"焦点在输入框就跳过"覆盖不到的盲区。
+  usePasteImages(pasteActive, _uploadFiles)
 
   const onDragOver = (e) => { e.preventDefault(); setDrag(true) }
   const onDragLeave = (e) => {

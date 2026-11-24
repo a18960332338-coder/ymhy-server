@@ -3,6 +3,7 @@ import api, { EXPORT_MAX_FILES, W_ICON } from '../api'
 import Toast from '../toast'
 import Icon from '../components/Icon'
 import { downloadAsZip } from '../utils/packZip'
+import usePasteImages from '../hooks/usePasteImages'
 import { Button as HeroButton, Modal as HeroModal, Spinner, ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import { HeroInput, HeroSlider, HeroSelect, HeroTextArea } from '../components/ui'
 import {
@@ -331,37 +332,8 @@ function Modal({ title, visible, onClose, children, width = 560, footer }) {
   )
 }
 
-// 粘贴新增图片：仅在 enabled 时监听全局 paste，从剪贴板提取图片文件
-// 跳过输入框/可编辑元素，避免覆盖用户粘贴文本
-function usePasteImages(enabled, onFiles) {
-  const onFilesRef = useRef(onFiles)
-  useEffect(() => { onFilesRef.current = onFiles }, [onFiles])
-  useEffect(() => {
-    if (!enabled) return
-    const handler = (e) => {
-      const ae = document.activeElement
-      if (ae) {
-        const tag = (ae.tagName || '').toLowerCase()
-        if (tag === 'input' || tag === 'textarea' || ae.isContentEditable) return
-      }
-      const items = e.clipboardData && e.clipboardData.items
-      if (!items) return
-      const files = []
-      for (const it of items) {
-        if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
-          const f = it.getAsFile()
-          if (f) files.push(f)
-        }
-      }
-      if (files.length) {
-        e.preventDefault()
-        onFilesRef.current && onFilesRef.current(files)
-      }
-    }
-    document.addEventListener('paste', handler)
-    return () => document.removeEventListener('paste', handler)
-  }, [enabled])
-}
+// 粘贴新增图片：统一走共享 hook src/hooks/usePasteImages.js
+// （旧实现在这里重复定义了一份，且"焦点在输入框就跳过"会让输入框里粘贴的图片被静默丢弃）
 
 // ============================================================================
 // 国内模版生成
